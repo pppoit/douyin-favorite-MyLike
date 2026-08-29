@@ -22,7 +22,8 @@
   p.set('cookie_enabled', 'true');
   p.set('platform', 'PC');
   var url = 'https://www.douyin.com/aweme/v1/web/aweme/favorite/?' + p.toString();
-  var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout15s')); }, 15000); });
+  // 挂起保护:6 秒超时(黑洞时快速失败;正常响应 <2s)
+  var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout6s')); }, 6000); });
   Promise.race([
     fetch(url, { method: 'GET', credentials: 'include', headers: { 'accept': 'application/json, text/plain, */*' } })
       .then(function (resp) { return resp.text(); }),

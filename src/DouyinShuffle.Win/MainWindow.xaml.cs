@@ -391,12 +391,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnPlayerRisk()
+    /// <summary>播放取链失败自动 reload 引擎页重试的次数(上限 2,防循环)。用户重新点播放时重置。</summary>
+    private int _playerRiskReloadCount;
+
+    private async void OnPlayerRisk(int index)
     {
-        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(OnPlayerRisk); return; }
-        DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("取链疑似被风控,请在弹出的页面中完成验证")},true)");
-        // 传 sec_uid:验证窗以"收藏接口恢复"为完成信号(self 恢复不代表 detail 接口恢复,防循环弹窗)
-        OpenAuthWindow(DouyinAuthWindow.AuthMode.Verify, _orchestrator?.SecUid ?? "");
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(OnPlayerRisk, index); return; }
+        // 取链失败根因通常是引擎页 SDK 拦截器状态过期(风控后旧页面上下文失效,裸 fetch 持续黑洞),
+        // "重启应用才恢复"即此原因 → 这里把"重启"自动化:reload 引擎页重建 SDK 后自动重播。
+        // 验证窗信号(favorite/self)代表不了 detail 取链接口状态,弹窗只会秒过且无济于事,故不弹。
+        if (index < 0 || _playerRiskReloadCount >= 2)
+        {
+            DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("取链持续失败(页面状态异常),请稍后重试或重启应用")},true)");
+            return;
+        }
+        _playerRiskReloadCount++;
+        DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("取链异常,正在刷新页面状态…")},false)");
+        await ReloadDouyinPageAsync();
+        DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("页面状态已刷新,重新尝试播放…")},false)");
+        if (_player != null) await _player.RetryPlayAsync(index);
     }
 
     // ---------- 抖音页导航(供编排器调用) ----------
@@ -622,6 +635,7 @@ public partial class MainWindow : Window
                         ShowPlayer();
                         if (_player != null)
                         {
+                            _playerRiskReloadCount = 0;   // 用户主动操作 → 重置取链自愈重试上限
                             _player.SetQueue(filtered);
                             await _player.StartShuffledAsync();
                         }
@@ -668,6 +682,7 @@ public partial class MainWindow : Window
                                 .ToList();
                         }
                         ShowPlayer();
+                        _playerRiskReloadCount = 0;   // 用户主动操作 → 重置取链自愈重试上限
                         _player.SetQueue(queue);
                         var idx = queue.FindIndex(i => i.AwemeId == item.AwemeId);
                         await _player.PlayAtAsync(idx, userInitiated: true);

@@ -18,8 +18,8 @@
   p.set('cookie_enabled', 'true');
   p.set('platform', 'PC');
   var url = 'https://www.douyin.com/aweme/v1/web/user/profile/self/?' + p.toString();
-  // 挂起保护:15 秒超时(黑洞时快速失败,C# 侧另有 8 秒 TCS 兜底)
-  var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout15s')); }, 15000); });
+  // 挂起保护:6 秒超时(黑洞时快速失败,C# 侧另有 6 秒 TCS 兜底)
+  var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout6s')); }, 6000); });
   Promise.race([
     fetch(url, { method: 'GET', credentials: 'include', headers: { 'accept': 'application/json, text/plain, */*' } })
       .then(function (resp) { return resp.text(); }),

@@ -45,7 +45,7 @@
       .then(function (r) { return r.text().then(function (t) { return { s: r.status, b: t }; }); });
   }
   window.__dsh_direct_stop__ = false;
-  var fetched = 0, empty = 0, emptyDelay = 1200, totalItems = 0;
+  var fetched = 0, empty = 0, emptyDelay = 1200, totalItems = 0, emptyPages = 0;
   var lastCursor = -1, lastFirst = '', stallCount = 0;
   var finished = false;
   function done(reason) {
@@ -61,8 +61,8 @@
     // 安全上限:200 页 ≈ 3600 条,防异常无限翻页(宿主分轮续采)
     if (fetched >= 200) { done('safety'); return; }
     var url = buildUrl(CURSOR);
-    // 挂起保护:Promise.race 15 秒超时
-    var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout15s')); }, 15000); });
+    // 挂起保护:Promise.race 6 秒超时(黑洞时快速失败;正常接口响应 <2s,余量充足)
+    var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout6s')); }, 6000); });
     Promise.race([send(url), timeout]).then(function (res) {
       var body = res.b, status = res.s;
       var isJson = body && body.trim().charAt(0) === '{';
@@ -71,9 +71,9 @@
         post({ type: 'direct_fail', fetched: fetched, empty: empty, status: status, body: (body || '').slice(0, 150) });
         // 首页即不可用 → notready,让宿主分流(网络抖动重试 / 限流弹验证)
         if (fetched === 0 && empty >= 2) { done('notready'); return; }
-        if (empty >= 4) { done('blocked'); return; }
+        if (empty >= 3) { done('blocked'); return; }   // 连续 3 次空响应即判定风控(缩短黑洞空转)
         setTimeout(step, emptyDelay);
-        emptyDelay = Math.min(12000, emptyDelay * 2);
+        emptyDelay = Math.min(8000, emptyDelay * 2);
         return;
       }
       empty = 0;
@@ -105,6 +105,15 @@
           return;
         }
       }
+      // 空数据页检测:接口返回 JSON 但列表为空且 has_more=true = 风控"假数据"响应。
+      // 正常页至少 1 条;连续 3 页空说明被风控喂空列表,立即判定 blocked 交给宿主分流,
+      // 否则会一直空翻到 200 页 safety 上限(≈数分钟空转,且被当作正常收尾,无风控提示)。
+      if (pCount === 0 && hasMore) {
+        emptyPages++;
+        if (emptyPages >= 3) { done('blocked'); return; }
+      } else {
+        emptyPages = 0;
+      }
       if (next !== 0 && (next === lastCursor || (curFirst && curFirst === lastFirst))) {
         stallCount++;
         if (stallCount >= 3) { done('stalled'); return; }
@@ -120,9 +129,9 @@
       empty++;
       post({ type: 'direct_fail', fetched: fetched, empty: empty, status: 0, body: 'err:' + String(e && e.message || e) });
       if (fetched === 0 && empty >= 2) { done('notready'); return; }
-      if (empty >= 4) { done('blocked'); return; }
+      if (empty >= 3) { done('blocked'); return; }   // 连续 3 次空响应即判定风控(缩短黑洞空转)
       setTimeout(step, emptyDelay);
-      emptyDelay = Math.min(12000, emptyDelay * 2);
+      emptyDelay = Math.min(8000, emptyDelay * 2);
     });
   }
   step();

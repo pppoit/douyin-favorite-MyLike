@@ -21,9 +21,12 @@
   p.set('cookie_enabled', 'true');
   p.set('platform', 'PC');
   var url = 'https://www.douyin.com/aweme/v1/web/aweme/detail/?' + p.toString();
-  // 裸 fetch:页面拦截器自动补签名
-  fetch(url, { method: 'GET', credentials: 'include', headers: { 'accept': 'application/json, text/plain, */*' } })
-    .then(function (r) { return r.text(); })
-    .then(function (body) { post({ type: 'detail_resp', id: AID, body: body }); })
-    .catch(function (e) { post({ type: 'detail_resp', id: AID, err: String(e) }); });
+  // 裸 fetch:页面拦截器自动补签名;6 秒超时防黑洞挂死(C# 侧另有 6 秒 TCS 兜底)
+  var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout6s')); }, 6000); });
+  Promise.race([
+    fetch(url, { method: 'GET', credentials: 'include', headers: { 'accept': 'application/json, text/plain, */*' } })
+      .then(function (r) { return r.text(); })
+      .then(function (body) { post({ type: 'detail_resp', id: AID, body: body }); }),
+    timeout
+  ]).catch(function (e) { post({ type: 'detail_resp', id: AID, err: String(e) }); });
 })();

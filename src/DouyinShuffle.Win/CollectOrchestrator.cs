@@ -7,7 +7,7 @@ namespace DouyinShuffle.Win;
 /// 采集编排器(单一通道 + 收藏接口单一真相源):
 ///
 /// 链路:登录检查 → sec_uid(self 探测,只管登录态) → 引擎页预热 →
-///   ★采集前预检(favorite 探测,18s 内定位接口状态)
+///   ★采集前预检(favorite 探测,8s 内定位接口状态)
 ///     OK  → 翻页采集(单一直连通道;单轮 200 页上限,分轮自动续采,最多 30 轮)
 ///     不通 → 短重试 2 次 → 仍不通分流:
 ///       已有数据 = 限流 → 弹验证窗(轮询 favorite 恢复,恢复即自动断点续采)
@@ -33,6 +33,12 @@ internal sealed class CollectOrchestrator
 
     private bool _pendingCollectResume;
     private int _autoRecoverCount;   // 采集波动静默恢复次数(防死循环,超过 3 次转人工/终止)
+
+    /// <summary>
+    /// 风控挂起:采集中途判定限流后不再立即弹窗(弹窗本身会加载抖音页,加重刺激接口),
+    /// 改为主动停止 + 提示稍后再点采集;待用户下次点「采集」的预检阶段才弹滑块验证。
+    /// </summary>
+    private bool _riskHangup;
 
     public bool IsCollecting => _collecting;
     public string SecUid => _lastSecUid;
@@ -63,7 +69,7 @@ internal sealed class CollectOrchestrator
         }
         var collector = _host.Collector;
         var cursor = _lastCollectIncomplete && collector is { Count: > 0 } ? collector.MaxCursor : 0;
-        AppLog.Write($"COLLECT start cursor={cursor} incomplete={_lastCollectIncomplete}");
+        AppLog.Write($"COLLECT start cursor={cursor} incomplete={_lastCollectIncomplete} hangup={_riskHangup}");
         _ = RunCollectAsync(cursor);
         return "started";
     }
@@ -124,12 +130,13 @@ internal sealed class CollectOrchestrator
             }
         }
 
-        // 仍不通 = 限流,弹人工验证窗(以收藏接口恢复为完成信号,通过后自动断点续采)
+        // 仍不通 = 限流:挂起等待,不再立即弹窗(弹窗推迟到用户下次点「采集」的预检阶段,
+        // 减少采集中途加载抖音页对接口的刺激);UI 补 collectDone 让进度条复位并刷新列表
         _autoRecoverCount = 0;
-        _pendingCollectResume = true;
+        _riskHangup = true;
         Stop();
-        _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("接口被限,请在弹出的页面完成滑块验证") + ",true)");
-        _host.OpenAuthWindow(DouyinAuthWindow.AuthMode.Verify, uid);
+        _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("采集被风控暂停,请稍等片刻后再点「采集」,届时会自动弹出滑块验证") + ",true)");
+        _host.DispatchUi($"window.__dsh_collectDone && window.__dsh_collectDone({MainWindow.JsonText((_host.Collector?.Count ?? 0).ToString())},false)");
     }
 
     /// <summary>等旧循环退出后从断点重启采集。</summary>
@@ -194,7 +201,7 @@ internal sealed class CollectOrchestrator
             // 3. 引擎页预热
             await _host.EnsureLikePageAsync();
 
-            // 4. ★采集前预检:favorite 探测(18s 定位,不再黑洞 2×15s 才发现问题)
+            // 4. ★采集前预检:favorite 探测(8s 内定位接口状态,不再黑洞 2×15s 才发现问题)
             if (!ct.IsCancellationRequested)
             {
                 _host.DispatchUi("window.__dsh_collectStatus && window.__dsh_collectStatus(" + MainWindow.JsonText("正在检查接口状态…") + ")");
@@ -202,18 +209,20 @@ internal sealed class CollectOrchestrator
                 var favOk = await DouyinProbe.CheckFavoriteApiAsync(_host.DouyinCoreInternal, uid);
                 if (!favOk && !ct.IsCancellationRequested)
                 {
-                    // 短重试一次(3s,滤掉瞬时抖动);仍不通则分流
-                    await Task.Delay(3000, ct);
+                    // 短重试一次(2s,滤掉瞬时抖动);仍不通则分流
+                    await Task.Delay(2000, ct);
                     favOk = await DouyinProbe.CheckFavoriteApiAsync(_host.DouyinCoreInternal, uid);
                 }
                 if (!favOk && !ct.IsCancellationRequested)
                 {
-                    await HandleInterfaceDownAsync(uid, collector.Count, ct);
+                    // 用户主动点「采集」→ 允许弹滑块验证窗(风控挂起状态也在这一环恢复验证)
+                    await HandleInterfaceDownAsync(uid, collector.Count, ct, allowPopup: true);
                     if (!ct.IsCancellationRequested)
                         return;   // 已分流(弹验证窗或报错),本轮结束
                 }
             }
             if (ct.IsCancellationRequested) return;
+            _riskHangup = false;   // 预检通过(接口恢复)→ 解除风控挂起
 
             // 5. 翻页采集(单一通道;分轮续采:单轮 200 页上限到达后自动从 MaxCursor 继续,
             //    否则超长列表再点采集会立即命中"整页已知"增量停止,尾部永远采不到。最多 30 轮 ≈ 10万条)
@@ -233,7 +242,7 @@ internal sealed class CollectOrchestrator
             var reasonKey = reason.Split(':')[0];
 
             // 6. 翻页中失败(0 页黑洞/blocked)→ favorite 探测分流:波动自愈已由 JS 退避处理,
-            //    到这里还不通就是限流;已有数据弹验证窗,无数据普通报错
+            //    到这里还不通就是限流;采集中途挂起不弹窗(下次点采集预检再弹),无数据普通报错
             if (reasonKey is "notready" or "blocked" && !ct.IsCancellationRequested)
             {
                 var fetchedPages = 0;
@@ -241,7 +250,7 @@ internal sealed class CollectOrchestrator
                 if (colon > 0) int.TryParse(reason[(colon + 1)..], out fetchedPages);
                 if (fetchedPages == 0)
                 {
-                    await HandleInterfaceDownAsync(uid, collector.Count, ct);
+                    await HandleInterfaceDownAsync(uid, collector.Count, ct, allowPopup: false);
                     return;
                 }
                 // 中途失败(>0 页):数据已落库,断点续采标志由下方统一处理
@@ -253,7 +262,8 @@ internal sealed class CollectOrchestrator
             if (ok) _autoRecoverCount = 0;   // 采集正常完成,重置自愈计数
             _host.SaveNow(_lastCollectIncomplete);
             await _host.PushStateAsync();
-            _host.DispatchUi("window.__dsh_refresh && window.__dsh_refresh()");
+            // 不自动刷新列表(避免采集频繁结束触发全量重绘卡顿):由用户点左侧「刷新列表」手动刷新,
+            // collectDone 只负责进度条复位与结果提示
             if (reasonKey == "busy")
                 _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("已有采集在进行") + ",true)");
             else
@@ -292,13 +302,16 @@ internal sealed class CollectOrchestrator
 
     /// <summary>
     /// 收藏接口不可用时的统一分流:
-    /// 已有数据 = 限流(网络抖动已被调用方的重试排除)→ 弹验证窗,轮询 favorite 恢复,
-    ///   恢复即自动关窗并从断点续采;
+    /// 已有数据 = 限流(网络抖动已被调用方的重试排除)。
+    ///   allowPopup=true(用户主动点「采集」的预检阶段)→ reload 再确认,仍不通则弹验证窗,
+    ///     以收藏接口恢复为完成信号,通过后自动断点续采;
+    ///   allowPopup=false(采集中途/风控波动)→ 挂起不弹窗:停止采集并提示稍后再点,
+    ///     下次预检时再弹(弹窗加载抖音页本身会刺激接口,采集中途应避免)。
     /// 无数据 = 网络/环境问题 → 报错退出(弹验证窗无意义,页面里没有滑块可滑)。
     /// </summary>
-    private async Task HandleInterfaceDownAsync(string uid, int collectedCount, CancellationToken ct)
+    private async Task HandleInterfaceDownAsync(string uid, int collectedCount, CancellationToken ct, bool allowPopup)
     {
-        AppLog.Write($"COLLECT interface down (stored={collectedCount})");
+        AppLog.Write($"COLLECT interface down (stored={collectedCount} allowPopup={allowPopup})");
         if (collectedCount > 0)
         {
             // 限流:先 reload 重建 SDK(旧页面拦截器持过期状态也会黑洞),再确认一次
@@ -308,16 +321,28 @@ internal sealed class CollectOrchestrator
             if (favOk)
             {
                 AppLog.Write("COLLECT recovered after reload");
+                _riskHangup = false;   // 接口已恢复,解除挂起
                 _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("已恢复页面状态,自动继续采集…") + ",false)");
                 await ResumeAsync();
                 return;
             }
-            // 真限流 → 验证窗(轮询 favorite 恢复;传 sec_uid 作为完成信号)
-            _pendingCollectResume = true;   // 验证通过后自动从断点续采
-            _autoRecoverCount = 0;
-            _host.DispatchUi("window.__dsh_collectStatus && window.__dsh_collectStatus(" + MainWindow.JsonText("接口被限,已暂停采集;请在验证窗口完成滑块,或等其自动恢复") + ")");
-            _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("接口被限,请在弹出的页面完成滑块验证") + ",true)");
-            _host.OpenAuthWindow(DouyinAuthWindow.AuthMode.Verify, uid);
+            if (allowPopup)
+            {
+                // 用户主动点「采集」后的预检:弹验证窗(轮询 favorite 恢复;传 sec_uid 作为完成信号)
+                _riskHangup = false;
+                _pendingCollectResume = true;   // 验证通过后自动从断点续采
+                _autoRecoverCount = 0;
+                _host.DispatchUi("window.__dsh_collectStatus && window.__dsh_collectStatus(" + MainWindow.JsonText("接口被限,请在验证窗口完成滑块,或等其自动恢复") + ")");
+                _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("接口被限,请在弹出的页面完成滑块验证") + ",true)");
+                _host.OpenAuthWindow(DouyinAuthWindow.AuthMode.Verify, uid);
+            }
+            else
+            {
+                // 采集中途:挂起,不弹窗;提示稍后再点采集(下次预检阶段再弹滑块)
+                _riskHangup = true;
+                _host.DispatchUi("window.__dsh_toast && window.__dsh_toast(" + MainWindow.JsonText("采集被风控暂停,请稍等片刻后再点「采集」,届时会自动弹出滑块验证") + ",true)");
+                _host.DispatchUi($"window.__dsh_collectDone && window.__dsh_collectDone({MainWindow.JsonText(collectedCount.ToString())},false)");
+            }
         }
         else
         {
@@ -355,7 +380,7 @@ internal sealed class CollectOrchestrator
             var (h, u) = await DouyinProbe.CheckHealthAsync(_host.DouyinCoreInternal);
             AppLog.Write($"PROBE r2#{i + 1} {h}");
             if (h != ApiHealth.NotReady) return (h, u);
-            await Task.Delay(3000, ct);
+            await Task.Delay(2000, ct);
         }
 
         return (ApiHealth.NotReady, "");

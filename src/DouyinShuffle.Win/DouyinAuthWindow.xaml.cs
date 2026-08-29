@@ -86,7 +86,7 @@ public partial class DouyinAuthWindow : Window
                 // 先等页面起来 + securitySDK 初始化
                 await Task.Delay(2000, ct);
                 DateTime? cookieSeenAt = null;   // Login 兜底:cookie 出现的时刻
-                // 验证模式探测收藏接口(单次最长 ~18s 超时),60 次 ≈ 最多约 19 分钟;
+                // 验证模式探测收藏接口(单次最长 ~8s 超时),60 次 ≈ 最多约 8 分钟;
                 // 登录模式探测 self(秒级),360 次 ≈ 6 分钟
                 var maxLoops = _mode == AuthMode.Verify && _secUid.Length > 0 ? 60 : 360;
                 for (var i = 0; i < maxLoops && !ct.IsCancellationRequested; i++)

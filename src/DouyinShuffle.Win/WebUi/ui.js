@@ -44,7 +44,7 @@ function toast(msg, err) {
   el.style.background = err ? '#7f1d1d' : '#1f2329';
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), err ? 4200 : 2600);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 5000);
 }
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -93,7 +93,7 @@ window.__dsh_collectDone = function (count, finished) {
   document.getElementById('collect-bar').classList.add('hidden');
   document.getElementById('btn-collect').disabled = false;
   toast(finished ? `采集完成,共 ${count} 条` : `采集已停止,当前 ${count} 条`);
-  refresh();
+  // 不自动刷新列表:用户点左侧「刷新列表」手动刷新(避免采集频繁结束触发全量重绘卡顿)
 };
 // 验证窗口打开期间锁定采集按钮(防暴力:此时点采集只会刺激接口);关闭后解锁
 window.__dsh_verifyLock = function (locked) {
@@ -101,7 +101,7 @@ window.__dsh_verifyLock = function (locked) {
   if (locked) {
     toast('接口被限,请在验证窗口完成滑块;期间采集已暂停', true);
   } else {
-    // 验证窗关闭(通过或取消):进度条收起,采集状态复位(用户稍后可手动点采集断点续采)
+    // 验证窗关闭(通过或取消):进度条收起,采集状态复位;列表由用户手动刷新
     collecting = false;
     document.getElementById('collect-bar').classList.add('hidden');
   }
@@ -528,6 +528,11 @@ document.addEventListener('keydown', e => {
 window.addEventListener('DOMContentLoaded', () => {
   bindGrid();
   updateSelectUi();
+  // 手动刷新列表按钮(采集/导入等操作后,由用户点击刷新)
+  document.getElementById('btn-refresh-list').addEventListener('click', () => {
+    refresh();
+    toast('列表已刷新');
+  });
   const hasPost = !!(window.chrome && window.chrome.webview && window.chrome.webview.postMessage);
   if (!hasPost) toast('桥接未就绪', true);
   refresh();

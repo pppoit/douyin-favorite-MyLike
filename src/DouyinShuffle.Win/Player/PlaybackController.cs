@@ -48,8 +48,8 @@ public sealed class PlaybackController
     /// <summary>一般性提示。</summary>
     public event Action<string>? Notice;
 
-    /// <summary>取链连续失败(疑似风控)。宿主可弹验证窗口。</summary>
-    public event Action? RiskDetected;
+    /// <summary>取链连续失败(疑似风控)。携带失败时的队列索引,宿主 reload 引擎页后可从此重试。</summary>
+    public event Action<int>? RiskDetected;
 
     /// <summary>请求窗口全屏切换(播放页 JS 的全屏按钮/双击/F 键)。</summary>
     public event Action? FullscreenToggleRequested;
@@ -125,6 +125,9 @@ public sealed class PlaybackController
         await PlayAtAsync(0, userInitiated: true);
     }
 
+    /// <summary>宿主 reload 引擎页重建 SDK 后,从指定索引重试播放(取链失败自愈链路)。</summary>
+    public Task RetryPlayAsync(int index) => PlayAtAsync(index, userInitiated: true);
+
     private Task NextAsync() => AdvanceAsync(1);
     private Task PrevAsync() => AdvanceAsync(-1);
 
@@ -183,8 +186,9 @@ public sealed class PlaybackController
         lock (_sync) _failureStreak++;
         if (_failureStreak >= 5)
         {
-            Notice?.Invoke("连续 5 条无法获取新链接(可能触发风控),已停止播放。可稍后重试或换网络。");
-            RiskDetected?.Invoke();
+            var failedIndex = _index;   // StopAsync 会清 _index,先记下重试锚点
+            Notice?.Invoke("连续 5 条无法获取新链接(可能触发风控),已停止播放。");
+            RiskDetected?.Invoke(failedIndex);
             await StopAsync();
             return;
         }

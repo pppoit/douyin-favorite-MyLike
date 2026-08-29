@@ -76,7 +76,7 @@ public static class DouyinProbe
             var sw = System.Diagnostics.Stopwatch.StartNew();
             // 取数脚本见 Capture/Scripts/health-check.js(请求原则与直连采集同款:不伪造指纹)
             await core.ExecuteScriptAsync(ScriptLoader.Get("health-check.js").Replace("{{ID}}", id));
-            var v = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            var v = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(6));   // JS 6s 超时 + 余量
             sw.Stop();
             AppLog.Write($"HEALTH {v} ({sw.ElapsedMilliseconds}ms)");
             if (v.StartsWith("ok:", StringComparison.Ordinal)) return (ApiHealth.Ok, v[3..]);
@@ -117,7 +117,7 @@ public static class DouyinProbe
                 .Replace("{{ID}}", id)
                 .Replace("{{SEC_USER_ID}}", secUserId);
             await core.ExecuteScriptAsync(js);
-            var v = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(18));
+            var v = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(8));   // JS 6s 超时 + 余量
             AppLog.Write("FAV-PROBE " + v);
             return v == "ok";
         }
