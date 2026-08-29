@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyLike</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-name">MyLike</div>
+    </div>
+    <div class="top-search">
+      <input id="search" type="text" placeholder="搜索标题 / 作者" />
+      <button class="top-btn primary" id="btn-search" title="执行搜索">搜索</button>
+    </div>
+    <div class="top-actions">
+      <button class="top-btn primary" id="btn-tutorial" title="查看使用教程">使用教程</button>
+      <button class="top-btn" id="btn-login" title="登录抖音">登录</button>
+      <button class="top-btn danger hidden" id="btn-logout" title="清除登录信息">退出登录</button>
+    </div>
+    <div class="win-controls">
+      <button class="wc-btn" id="win-min" title="最小化">&#8722;</button>
+      <button class="wc-btn" id="win-max" title="最大化 / 还原">&#9634;</button>
+      <button class="wc-btn wc-close" id="win-close" title="关闭">&#10005;</button>
+    </div>
+  </header>
+  <div class="body">
+    <nav class="sidenav">
+      <div class="side-item active" id="nav-all">
+        <span class="side-icon">&#9650;</span>
+        <span class="side-label">全部</span>
+        <span class="side-count" id="nav-all-count">0</span>
+      </div>
+      <div class="side-item" id="nav-gallery">
+        <span class="side-icon">&#128247;</span>
+        <span class="side-label">图集</span>
+        <span class="side-count" id="nav-gallery-count">0</span>
+      </div>
+      <div class="side-item" id="nav-video">
+        <span class="side-icon">&#127916;</span>
+        <span class="side-label">视频</span>
+        <span class="side-count" id="nav-video-count">0</span>
+      </div>
+      <div class="side-help">
+        <button class="help-btn primary" id="btn-faq" title="查看常见问题">&#10067; 常见问题</button>
+      </div>
+      <div class="side-foot" id="login-state">未登录</div>
+    </nav>
+    <main class="content">
+      <!-- 采集进度条 -->
+      <section class="collect-bar hidden" id="collect-bar">
+        <div class="collect-main">
+          <div class="collect-info">
+            <span class="spinner"></span>
+            <span id="collect-text">采集中…</span>
+          </div>
+          <button class="mini-btn" id="btn-stop-collect">停止</button>
+        </div>
+        <div class="collect-note">提示:最终数量可能与抖音显示的不一致——大量内容可能已失效、下架或被删除</div>
+      </section>
+      <section class="dashboard">
+        <div class="dash-card">
+          <div class="dash-left">
+            <div class="dash-label">MY LIKES</div>
+            <div class="dash-title">已采集 <b id="stat-total">0</b> 条</div>
+            <div class="dash-sub" id="dash-sub">可洗牌播放或点击卡片播放。</div>
+          </div>
+          <button class="collect-btn" id="btn-collect" title="直连快采喜欢列表">
+            <span class="heart">&#10084;</span>采集
+          </button>
+        </div>
+        <div class="dash-stats">
+          <div class="stat-box"><div class="s-v" id="stat-videos">0</div><div class="s-l">视频</div></div>
+          <div class="stat-box"><div class="s-v" id="stat-gallery">0</div><div class="s-l">图集</div></div>
+          <div class="stat-box"><div class="s-v" id="stat-invalid">0</div><div class="s-l">失效</div></div>
+          <div class="stat-box"><div class="s-v" id="stat-years">0</div><div class="s-l">年份</div></div>
+        </div>
+      </section>
+      <section class="list-toolbar">
+        <div class="filters">
+          <select id="year-filter"><option value="">全部年份</option></select>
+          <select id="month-filter"><option value="">全部月份</option></select>
+          <button class="top-btn primary" id="btn-shuffle" title="按当前筛选条件洗牌播放">洗牌播放</button>
+        </div>
+        <div class="toolbar-actions">
+          <button class="mini-btn" id="btn-select" title="进入选择模式">选择</button>
+          <span class="select-group hidden" id="select-group">
+            <button class="mini-btn" id="btn-select-all">全选</button>
+            <button class="mini-btn" id="btn-unselect">取消</button>
+            <button class="mini-btn danger" id="btn-delete" title="删除选中的条目">删除</button>
+          </span>
+          <button class="mini-btn" id="btn-export">导出</button>
+          <button class="mini-btn" id="btn-import">导入</button>
+          <span class="page-info" id="list-info">共 0 条</span>
+        </div>
+      </section>
+      <section class="list-grid" id="list-grid"></section>
+      <div class="load-more hidden" id="load-more">下拉加载更多…</div>
+    </main>
+  </div>
+</div>
+<div class="playing-bar hidden" id="playing-bar">
+  <span id="playing-text"></span>
+  <button class="mini-btn" id="btn-stop">停止</button>
+</div>
+<div class="toast" id="toast"></div>
+<!-- 帮助弹窗(使用教程 / 常见问题) -->
+<div class="modal-mask hidden" id="help-modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span class="modal-title" id="help-title">帮助</span>
+      <button class="modal-close" id="help-close" title="关闭(Esc)">&#10005;</button>
+    </div>
+    <div class="modal-body" id="help-body"></div>
+  </div>
+</div>
+<script src="ui.js"></script>
+</body>
+</html>

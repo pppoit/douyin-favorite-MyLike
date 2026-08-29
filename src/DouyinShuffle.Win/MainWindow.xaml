@@ -1,0 +1,25 @@
+<Window x:Class="DouyinShuffle.Win.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="MyLike"
+        Height="820" Width="1400"
+        WindowStartupLocation="CenterScreen"
+        Background="#F5F6F8">
+    <!-- 无边框自绘标题栏:去系统标题栏,顶栏由 Web UI 承担(app-region:drag 拖动 + 自绘最小化/最大化/关闭) -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <Grid x:Name="RootGrid">
+        <!-- 本地主界面(卡片列表) -->
+        <wv2:WebView2 x:Name="UiWebView" Visibility="Visible"/>
+
+        <!-- 独立纯净播放页(方案 B):自有播放器,无抖音页面干扰。
+             Collapsed(非 Hidden):显示时强制重新布局,规避旧版 WebView2 白屏不重绘 bug -->
+        <wv2:WebView2 x:Name="PlayerWebView" Visibility="Collapsed" DefaultBackgroundColor="Black"/>
+    </Grid>
+</Window>

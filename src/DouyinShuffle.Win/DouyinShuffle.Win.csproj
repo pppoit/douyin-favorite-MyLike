@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>MyLike</AssemblyName>
+    <RootNamespace>DouyinShuffle.Win</RootNamespace>
+    <RestoreIgnoreFailedSources>true</RestoreIgnoreFailedSources>
+    <!-- 离线环境连不上 nuget.org,关闭漏洞审计,避免 NU1900 噪音;联网后可移除 -->
+    <NuGetAudit>false</NuGetAudit>
+
+    <!-- 发布即用(GitHub Release):用户下载解压双击即跑,无需装 .NET/SDK -->
+    <Version>1.0.0</Version>
+    <Product>MyLike</Product>
+    <Description>抖音喜欢列表本地收藏与洗牌播放器</Description>
+    <Authors>MyLike</Authors>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 发布参数(仅 dotnet publish -c Release 生效;普通 build 仍走框架依赖,便于日常调试) -->
+    <SelfContained Condition="'$(Configuration)'=='Release'">true</SelfContained>
+    <RuntimeIdentifier Condition="'$(Configuration)'=='Release'">win-x64</RuntimeIdentifier>
+    <PublishSingleFile Condition="'$(Configuration)'=='Release'">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(Configuration)'=='Release'">true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile Condition="'$(Configuration)'=='Release'">true</EnableCompressionInSingleFile>
+    <ReadyToRun Condition="'$(Configuration)'=='Release'">true</ReadyToRun>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- 离线引用的 WebView2 SDK 程序集(从本机 VS 2022 复制,见 libs/README.md) -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Web.WebView2.Core">
+      <HintPath>libs\Microsoft.Web.WebView2.Core.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.Web.WebView2.Wpf">
+      <HintPath>libs\Microsoft.Web.WebView2.Wpf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <None Update="libs\WebView2Loader.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- WinRT 投影(离线借用 VS,用于 Windows.Storage.Streams 等类型) -->
+    <Reference Include="WinRT.Runtime">
+      <HintPath>libs\WinRT.Runtime.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.Windows.SDK.NET">
+      <HintPath>libs\Microsoft.Windows.SDK.NET.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 本地 Web 前端 UI(作为嵌入资源,运行时读出写临时文件供 WebView2 加载) -->
+  <ItemGroup>
+    <EmbeddedResource Include="WebUi\**\*" />
+  </ItemGroup>
+
+  <!-- 采集 JS 脚本(嵌入资源,ScriptLoader 运行时读取) -->
+  <ItemGroup>
+    <EmbeddedResource Include="Capture\Scripts\*.js" />
+  </ItemGroup>
+
+  <!-- 原生 WebView2Loader.dll:不能进单文件包(P/Invoke 从 exe 旁加载),
+       必须随发布产物一起输出 → Release = exe + dll 两个文件 -->
+  <ItemGroup>
+    <None Include="libs\WebView2Loader.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>WebView2Loader.dll</Link>
+    </None>
+  </ItemGroup>
+
+  <!-- 兜底:确保 WebView2Loader.dll 一定出现在构建输出目录 -->
+  <Target Name="CopyWebView2Loader" AfterTargets="Build">
+    <Copy SourceFiles="libs\WebView2Loader.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

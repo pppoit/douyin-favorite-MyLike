@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>播放</title>
+<style>
+:root { --accent:#fe2c55; }
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Microsoft YaHei",sans-serif;user-select:none}
+#dsh-root{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+#dsh-video{width:100vw;height:100vh;object-fit:contain;cursor:pointer;outline:none;background:#000}
+#dsh-slide{max-width:100vw;max-height:100vh;object-fit:contain;cursor:pointer;display:none}
+#dsh-audio{display:none}
+#dsh-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;background:rgba(0,0,0,.55);padding:14px 26px;border-radius:50px;font-size:16px;display:none;pointer-events:none;z-index:5}
+#dsh-load{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font-size:14px;display:none;align-items:center;gap:10px;background:rgba(0,0,0,.5);padding:12px 22px;border-radius:24px;z-index:5}
+#dsh-load .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#dsh-slide-prev,#dsh-slide-next{position:absolute;top:50%;transform:translateY(-50%);width:46px;height:46px;border-radius:50%;background:rgba(0,0,0,.4);border:none;color:#fff;font-size:20px;cursor:pointer;display:none;align-items:center;justify-content:center;z-index:3}
+#dsh-slide-prev{left:16px}
+#dsh-slide-next{right:16px}
+#dsh-slide-prev:hover,#dsh-slide-next:hover{background:rgba(0,0,0,.65)}
+#dsh-ctrl{position:absolute;bottom:0;left:0;right:0;display:flex;gap:22px;align-items:center;justify-content:center;padding-bottom:18px;z-index:3;background:linear-gradient(to top,rgba(0,0,0,.6),transparent)}
+#dsh-ctrl button{background:transparent;border:none;color:#fff;font-size:20px;width:46px;height:46px;cursor:pointer;border-radius:50%;display:flex;align-items:center;justify-content:center}
+#dsh-ctrl button:hover{background:rgba(255,255,255,.15)}
+#dsh-toggle{font-size:26px !important;width:54px !important;height:54px !important}
+#dsh-page,#dsh-fs,#dsh-mute{font-size:15px !important}
+#dsh-info{position:absolute;left:24px;right:24px;bottom:96px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);pointer-events:none;text-align:left;z-index:3}
+#dsh-title{font-size:15px;line-height:1.5;max-height:45px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all}
+#dsh-author{font-size:12px;opacity:.85;margin-top:8px}
+#dsh-time{font-size:12px;opacity:.6;margin-left:10px}
+#dsh-pb{position:absolute;left:0;right:0;bottom:74px;height:16px;cursor:pointer;z-index:3}
+#dsh-pb-track{position:absolute;left:0;right:0;bottom:7px;height:3px;background:rgba(255,255,255,.3);border-radius:2px}
+#dsh-pb-fill{display:block;height:100%;width:0;background:var(--accent);border-radius:2px}
+#dsh-pb-thumb{position:absolute;bottom:4px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--accent);transform:scale(.7);opacity:.8;transition:transform .15s,opacity .15s;box-shadow:0 0 6px rgba(254,44,85,.6)}
+#dsh-pb:hover #dsh-pb-thumb,#dsh-pb.dragging #dsh-pb-thumb{transform:scale(1);opacity:1}
+#dsh-pb-tip{position:absolute;bottom:26px;color:#fff;font-size:12px;background:rgba(0,0,0,.75);padding:4px 8px;border-radius:5px;pointer-events:none;white-space:nowrap;display:none}
+#dsh-close{position:absolute;top:14px;right:18px;color:#fff;font-size:24px;background:none;border:none;cursor:pointer;z-index:3}
+#dsh-close:hover{color:var(--accent)}
+#dsh-failmsg{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);color:#fff;background:rgba(0,0,0,.75);padding:16px 24px;border-radius:10px;display:none;text-align:center;font-size:14px;z-index:4}
+#dsh-failmsg button{background:rgba(254,44,85,.85);border:none;color:#fff;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:13px;margin-top:10px}
+#dsh-failmsg button.ghost{background:rgba(255,255,255,.15);margin-left:8px}
+/* UI 自动隐藏:鼠标移动显示,1.6s 无操作淡出;悬停控制区保持 */
+#dsh-ctrl,#dsh-pb,#dsh-info,#dsh-close,#dsh-slide-prev,#dsh-slide-next{opacity:0;transition:opacity .3s ease;pointer-events:none}
+#dsh-root.ui-on #dsh-ctrl,#dsh-root.ui-on #dsh-pb,#dsh-root.ui-on #dsh-info,#dsh-root.ui-on #dsh-close,
+#dsh-root.ui-on #dsh-slide-prev,#dsh-root.ui-on #dsh-slide-next,
+#dsh-root.ui-hold #dsh-ctrl,#dsh-root.ui-hold #dsh-pb,#dsh-root.ui-hold #dsh-info,#dsh-root.ui-hold #dsh-close,
+#dsh-root.ui-hold #dsh-slide-prev,#dsh-root.ui-hold #dsh-slide-next{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<div id="dsh-root">
+  <video id="dsh-video" playsinline></video>
+  <img id="dsh-slide" alt=""/>
+  <button id="dsh-slide-prev" title="上一张">&#9664;</button>
+  <button id="dsh-slide-next" title="下一张">&#9654;</button>
+  <audio id="dsh-audio"></audio>
+  <div id="dsh-load"><span class="spin"></span><span id="dsh-load-text">正在获取播放地址…</span></div>
+  <div id="dsh-hint">&#9654; 点击播放</div>
+  <div id="dsh-failmsg">该内容暂时无法播放<br/><button id="dsh-fail-skip">跳过</button><button class="ghost" id="dsh-fail-page">原页播放</button></div>
+  <div id="dsh-info"><div id="dsh-title"></div><div><span id="dsh-author-name"></span><span id="dsh-time"></span></div></div>
+  <div id="dsh-pb"><div id="dsh-pb-track"><i id="dsh-pb-fill"></i></div><div id="dsh-pb-thumb"></div><div id="dsh-pb-tip"></div></div>
+  <div id="dsh-ctrl">
+    <button id="dsh-prev" title="上一首(↑)">&#9198;</button>
+    <button id="dsh-toggle" title="播放/暂停(空格)">&#9654;</button>
+    <button id="dsh-next" title="下一首(↓)">&#9197;</button>
+    <button id="dsh-mute" title="静音(M)">&#128266;</button>
+    <button id="dsh-page" title="打开原页看评论">原页</button>
+    <button id="dsh-fs" title="全屏(F / 双击画面)">全屏</button>
+  </div>
+  <button id="dsh-close" title="停止并返回列表(Esc)">&#10005;</button>
+</div>
+<script>
+(function () {
+  function post(d) { try { window.chrome.webview.postMessage(d); } catch (e) {} }
+  function $(id) { return document.getElementById(id); }
+
+  var root = $('dsh-root'), video = $('dsh-video'), img = $('dsh-slide'), audio = $('dsh-audio'), hint = $('dsh-hint');
+
+  // 模块级状态(跨 show 共享,防旧定时器串台)
+  var slideTimer = null, slideIdx = 0, slideImages = [], slidePaused = false;
+  var stallTimer = null, showSeq = 0, muted = false;
+
+  function updateToggleIcon(playing) { $('dsh-toggle').innerHTML = playing ? '&#9208;' : '&#9654;'; }
+  function updateMuteIcon() { $('dsh-mute').textContent = muted ? '&#128263;' : '&#128266;'; }
+  function hideHint() { hint.style.display = 'none'; }
+  function showLoader(text) { if (text) $('dsh-load-text').textContent = text; $('dsh-load').style.display = 'flex'; }
+  function hideLoader() { $('dsh-load').style.display = 'none'; }
+
+  // ---------- UI 自动隐藏 ----------
+  var uiTimer = null;
+  function uiShow() {
+    root.classList.add('ui-on'); root.classList.remove('ui-hold');
+    if (uiTimer) { clearTimeout(uiTimer); uiTimer = null; }
+    uiTimer = setTimeout(function () { root.classList.remove('ui-on'); uiTimer = null; }, 1600);
+  }
+  function uiHold() { if (uiTimer) { clearTimeout(uiTimer); uiTimer = null; } root.classList.add('ui-hold'); root.classList.remove('ui-on'); }
+  function uiResume() { root.classList.remove('ui-hold'); uiShow(); }
+  root.addEventListener('mousemove', function () { if (root.classList.contains('ui-hold')) return; uiShow(); });
+  ['dsh-ctrl', 'dsh-pb', 'dsh-info'].forEach(function (id) {
+    var el = $(id); if (!el) return;
+    el.addEventListener('pointerenter', uiHold);
+    el.addEventListener('pointerleave', uiResume);
+  });
+
+  // ---------- 播放/暂停 ----------
+  function attemptPlay() {
+    hideHint();
+    video.__dsh_user_paused__ = false;
+    var p = video.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+  function togglePlay() {
+    hideHint();                          // 真实手势
+    if (slideImages.length > 0) { toggleSlide(); return; }
+    if (video.paused || video.ended) attemptPlay();
+    else { video.__dsh_user_paused__ = true; video.pause(); }
+  }
+
+  // ---------- 图集轮播 ----------
+  function updateSlideProgress() {
+    var total = slideImages.length || 0;
+    var pct = total ? ((slideIdx + 1) / total * 100) : 0;
+    $('dsh-pb-fill').style.width = pct + '%';
+    $('dsh-pb-thumb').style.left = pct + '%';
+  }
+  function slideTick() {
+    slideIdx++;
+    if (slideIdx >= slideImages.length) {
+      slideIdx = 0;                      // 循环
+      img.src = slideImages[0];
+      updateSlideProgress();
+      try { if (audio.ended) { audio.currentTime = 0; var ap = audio.play(); if (ap && ap.catch) ap.catch(function () {}); } } catch (e) {}
+      return;
+    }
+    img.src = slideImages[slideIdx];
+    updateSlideProgress();
+  }
+  function toggleSlide() {
+    if (slidePaused) {
+      slidePaused = false;
+      slideTimer = setInterval(slideTick, 2000);
+      hideHint();
+      try { if (audio.src) { var ap = audio.play(); if (ap && ap.catch) ap.catch(function () {}); } } catch (e) {}
+      updateToggleIcon(true);
+    } else {
+      slidePaused = true;
+      if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+      try { audio.pause(); } catch (e) {}
+      updateToggleIcon(false);
+    }
+  }
+  function slideStep(delta) {
+    var n = slideImages.length;
+    if (n === 0) return;
+    slideIdx = (slideIdx + delta + n) % n;
+    img.src = slideImages[slideIdx];
+    if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+    slidePaused = true;                  // 手动切图 → 固定当前图
+    updateSlideProgress();
+    updateToggleIcon(false);
+  }
+
+  // ---------- 滚轮切歌(抖音式) ----------
+  var lastSwitch = 0;
+  root.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var now = Date.now();
+    if (now - lastSwitch < 600) return;
+    if (Math.abs(e.deltaY) < 40) return;
+    lastSwitch = now;
+    post({ player: e.deltaY > 0 ? 'next' : 'prev' });
+  }, { passive: false });
+
+  root.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('button')) return;
+    togglePlay();
+  });
+  video.addEventListener('dblclick', function (e) { e.preventDefault(); post({ player: 'fullscreen' }); });
+
+  // ---------- 按钮 ----------
+  // 全屏走 C# 窗口级全屏(WebView2 内 requestFullscreen 不可靠):通知宿主切换
+  function toggleFs() { post({ player: 'fullscreen' }); }
+  function toggleMute() { muted = !muted; video.muted = muted; audio.muted = muted; updateMuteIcon(); }
+
+  $('dsh-toggle').onclick = function (e) { e.stopPropagation(); togglePlay(); };
+  $('dsh-prev').onclick = function (e) { e.stopPropagation(); post({ player: 'prev' }); };
+  $('dsh-next').onclick = function (e) { e.stopPropagation(); post({ player: 'next' }); };
+  $('dsh-page').onclick = function (e) { e.stopPropagation(); post({ player: 'openpage' }); };
+  $('dsh-close').onclick = function (e) { e.stopPropagation(); post({ player: 'close' }); };
+  $('dsh-fs').onclick = function (e) { e.stopPropagation(); toggleFs(); };
+  $('dsh-mute').onclick = function (e) { e.stopPropagation(); toggleMute(); };
+  $('dsh-fail-skip').onclick = function (e) { e.stopPropagation(); post({ player: 'next' }); };
+  $('dsh-fail-page').onclick = function (e) { e.stopPropagation(); post({ player: 'openpage' }); };
+  $('dsh-slide-prev').onclick = function (e) { e.stopPropagation(); slideStep(-1); };
+  $('dsh-slide-next').onclick = function (e) { e.stopPropagation(); slideStep(1); };
+
+  // ---------- 键盘 ----------
+  document.addEventListener('keydown', function (e) {
+    switch (e.code) {
+      case 'Space': e.preventDefault(); togglePlay(); break;
+      case 'ArrowLeft':
+        if (slideImages.length > 0) slideStep(-1);
+        else { try { video.currentTime = Math.max(0, video.currentTime - 5); } catch (_) {} }
+        break;
+      case 'ArrowRight':
+        if (slideImages.length > 0) slideStep(1);
+        else { try { if (video.duration) video.currentTime = Math.min(video.duration, video.currentTime + 5); } catch (_) {} }
+        break;
+      case 'ArrowUp': case 'PageUp': e.preventDefault(); post({ player: 'prev' }); break;
+      case 'ArrowDown': case 'PageDown': e.preventDefault(); post({ player: 'next' }); break;
+      case 'KeyF': toggleFs(); break;
+      case 'KeyM': toggleMute(); break;
+      case 'Escape': post({ player: 'close' }); break;
+    }
+  });
+
+  // ---------- 进度条(视频=seek;图集=选图) ----------
+  var pbEl = $('dsh-pb'), pbThumb = $('dsh-pb-thumb'), pbTip = $('dsh-pb-tip'), pbFill = $('dsh-pb-fill');
+  var pbDragging = false;
+
+  function pbRatioFromX(clientX) {
+    var r = pbEl.getBoundingClientRect();
+    var ratio = (clientX - r.left) / r.width;
+    return Math.max(0, Math.min(1, ratio));
+  }
+  function pbUpdateThumb() {
+    var ratio = 0;
+    if (slideImages.length > 0) ratio = slideImages.length ? ((slideIdx + 1) / slideImages.length) : 0;
+    else if (video.duration && isFinite(video.duration)) ratio = video.currentTime / video.duration;
+    pbFill.style.width = (ratio * 100) + '%';
+    pbThumb.style.left = (ratio * 100) + '%';
+  }
+  function pbSeek(ratio) {
+    if (slideImages.length > 0) {
+      var idx = Math.floor(ratio * slideImages.length);
+      if (idx >= slideImages.length) idx = slideImages.length - 1;
+      if (idx < 0) idx = 0;
+      if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+      slidePaused = true;
+      slideIdx = idx;
+      img.src = slideImages[idx];
+      updateSlideProgress();
+      updateToggleIcon(false);
+      pbTip.textContent = (idx + 1) + '/' + slideImages.length;
+      return;
+    }
+    if (video.duration && isFinite(video.duration)) {
+      video.currentTime = ratio * video.duration;
+      pbUpdateThumb();
+    }
+  }
+  function pbShowTip(clientX) {
+    var ratio = pbRatioFromX(clientX);
+    if (slideImages.length > 0) {
+      var idx = Math.min(slideImages.length - 1, Math.floor(ratio * slideImages.length));
+      pbTip.textContent = (idx + 1) + '/' + slideImages.length;
+    } else if (video.duration && isFinite(video.duration)) {
+      var secs = Math.floor(ratio * video.duration);
+      var m = Math.floor(secs / 60), s = secs % 60;
+      pbTip.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    } else {
+      pbTip.textContent = '';
+    }
+    pbTip.style.left = (ratio * 100) + '%';
+    pbTip.style.display = 'block';
+  }
+  pbEl.addEventListener('pointerdown', function (evt) {
+    evt.stopPropagation();
+    pbDragging = true;
+    pbEl.classList.add('dragging');
+    try { pbEl.setPointerCapture(evt.pointerId); } catch (e) {}
+    pbSeek(pbRatioFromX(evt.clientX));
+    pbShowTip(evt.clientX);
+  });
+  pbEl.addEventListener('pointermove', function (evt) {
+    pbUpdateThumb();
+    if (!pbDragging) return;
+    evt.stopPropagation();
+    pbSeek(pbRatioFromX(evt.clientX));
+    pbShowTip(evt.clientX);
+  });
+  pbEl.addEventListener('pointerup', function (evt) {
+    if (!pbDragging) return;
+    pbDragging = false;
+    pbEl.classList.remove('dragging');
+    pbSeek(pbRatioFromX(evt.clientX));
+    pbTip.style.display = 'none';
+  });
+  pbEl.addEventListener('pointerleave', function () { if (!pbDragging) pbTip.style.display = 'none'; });
+  pbEl.addEventListener('pointerenter', function (evt) { if (!pbDragging) pbShowTip(evt.clientX); });
+
+  // ---------- 视频事件 ----------
+  video.addEventListener('ended', function () { try { video.currentTime = 0; video.play(); } catch (e) {} });   // 循环
+  audio.addEventListener('ended', function () { try { if (audio.src) { audio.currentTime = 0; audio.play(); } } catch (e) {} });
+  video.addEventListener('play', function () { hideHint(); updateToggleIcon(true); });
+  video.addEventListener('pause', function () { updateToggleIcon(false); });
+  var lastProgress = 0;
+  video.addEventListener('timeupdate', function () {
+    var now = Date.now();
+    if (now - lastProgress < 500) return;
+    lastProgress = now;
+    pbUpdateThumb();
+  });
+
+  // ---------- C# → 页面命令 ----------
+  // 取链中(loader)
+  window.__dshPlayerLoad = function (text) {
+    showLoader(text);
+    $('dsh-failmsg').style.display = 'none';
+  };
+
+  // 播放(cfg:{urls,images,music,title,author,time,resume,index,total})
+  window.__dshPlayerShow = function (cfg) {
+    hideLoader();
+    var mySeq = ++showSeq;
+    stopStallCheck();
+    root.classList.add('ui-on');
+    uiShow();
+    if (muted) { video.muted = true; audio.muted = true; }
+
+    var titleText = cfg.title || '';
+    if (titleText.length > 60) titleText = titleText.slice(0, 60) + '…';
+    $('dsh-title').textContent = (cfg.index + 1) + '/' + cfg.total + '  ' + titleText;
+    $('dsh-title').title = cfg.title || '';
+    $('dsh-author-name').textContent = cfg.author || '';
+    $('dsh-time').textContent = cfg.time ? '发布时间:' + cfg.time : '';
+    pbFill.style.width = '0';
+    $('dsh-failmsg').style.display = 'none';
+
+    // 清理上一轮图集状态
+    if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+    slidePaused = false;
+    slideImages = [];
+    try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch (e) {}
+
+    var images = cfg.images || [];
+    if (images.length > 0) {
+      // 图集模式
+      try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {}
+      video.style.display = 'none';
+      img.style.display = 'block';
+      $('dsh-slide-prev').style.display = 'flex';
+      $('dsh-slide-next').style.display = 'flex';
+      slideImages = images;
+      slideIdx = 0;
+      img.src = images[0];
+      if (cfg.music) {
+        audio.src = cfg.music;
+        var ap = audio.play();
+        if (ap && ap.catch) ap.catch(function () {
+          if (!audio.error) {
+            hint.innerHTML = '&#9654; 点击开启声音';
+            hint.style.display = 'block';
+          }
+        });
+      }
+      updateSlideProgress();
+      updateToggleIcon(true);
+      slideTimer = setInterval(slideTick, 2000);
+      return;
+    }
+
+    // 视频模式
+    img.style.display = 'none';
+    video.style.display = '';
+
+    var urls = (cfg.urls && cfg.urls.length) ? cfg.urls : (cfg.url ? [cfg.url] : []);
+    var vi = 0;
+
+    function loadNext() {
+      if (mySeq !== showSeq) return;
+      if (vi >= urls.length) {
+        $('dsh-failmsg').style.display = 'block';
+        post({ player: 'allfailed' });
+        return;
+      }
+      video.removeAttribute('src');
+      video.load();
+      video.src = urls[vi++];
+    }
+
+    // 播放停滞检测:12 秒推进不足 1 秒(真断流)才切下一条
+    function stopStallCheck() { if (stallTimer) { clearInterval(stallTimer); stallTimer = null; } }
+    function startStallCheck() {
+      stopStallCheck();
+      var firstT = -1, checks = 0;
+      stallTimer = setInterval(function () {
+        if (mySeq !== showSeq) { stopStallCheck(); return; }
+        if (video.paused || video.__dsh_user_paused__) { checks = 0; return; }
+        if (checks === 0) firstT = video.currentTime;
+        checks++;
+        if (checks >= 6) {
+          if (video.currentTime - firstT < 1) { stopStallCheck(); loadNext(); return; }
+          checks = 0;
+        }
+      }, 2000);
+    }
+
+    video.onloadeddata = function () {
+      if (mySeq !== showSeq) return;
+      // 诊断:解码器无法解码时 videoWidth=0(WebView2 无 HEVC 支持 = 有声无画实锤)
+      post({ player: 'diag', w: video.videoWidth, h: video.videoHeight, codec: (video.src || '').indexOf('bytevc1') >= 0 || (video.src || '').indexOf('h265') >= 0 ? 'h265' : 'h264?' });
+      if (video.videoWidth > 0) {
+        if (cfg.resume && cfg.resume > 2) {
+          try { video.currentTime = Math.min(cfg.resume, (video.duration || cfg.resume + 5) - 2); } catch (e) {}
+        }
+        startStallCheck();
+        if (video.paused && !video.__dsh_user_paused__) {
+          var p = video.play();
+          if (p && p.catch) p.catch(function () {
+            hint.innerHTML = '&#9654; 点击播放';
+            hint.style.display = 'block';
+          });
+        }
+      }
+      else loadNext();
+    };
+    video.onerror = function () { if (mySeq !== showSeq) return; stopStallCheck(); loadNext(); };
+    video.onpause = function () { stopStallCheck(); };
+    video.onplay = function () { startStallCheck(); };
+
+    loadNext();
+    video.__dsh_user_paused__ = false;
+    var p0 = video.play();
+    if (p0 && p0.catch) p0.catch(function () {});
+  };
+
+  // 停止(宿主隐藏页面时调用)
+  window.__dshPlayerHide = function () {
+    stopStallCheckSafe();
+    if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
+    slideImages = [];
+    hideLoader();
+    hideHint();
+    $('dsh-failmsg').style.display = 'none';
+    root.classList.remove('ui-on');
+    root.classList.remove('ui-hold');
+    try { video.pause(); } catch (e) {}
+    video.removeAttribute('src');
+    try { audio.pause(); } catch (e) {}
+    audio.removeAttribute('src');
+  };
+  function stopStallCheckSafe() { if (stallTimer) { clearInterval(stallTimer); stallTimer = null; } }
+})();
+</script>
+</body>
+</html>

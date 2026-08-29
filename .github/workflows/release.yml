@@ -1,0 +1,41 @@
+# 自动发布:推送 v* 标签时,自动构建自包含单文件并生成 Release 附件
+# 用法:git tag v1.0.0 && git push origin v1.0.0
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Release 配置已在 csproj 中打开 SelfContained + PublishSingleFile,
+      # 产物为单个 MyLike.exe(WebView2Loader 已随单文件自解压,实测无需旁挂 dll)
+      - name: Publish
+        run: dotnet publish src/DouyinShuffle.Win/DouyinShuffle.Win.csproj -c Release -o publish
+
+      - name: Pack zip (备用)
+        shell: pwsh
+        run: Compress-Archive -Path publish/MyLike.exe -DestinationPath MyLike-win-x64.zip
+
+      # 直接挂 exe:用户下载即用,无需解压;zip 同时保留供受限网络/浏览器使用
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            publish/MyLike.exe
+            MyLike-win-x64.zip
+          generate_release_notes: true

@@ -1,0 +1,21 @@
+<Window x:Class="DouyinShuffle.Win.DouyinAuthWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="抖音登录 / 安全验证"
+        Height="760" Width="1020"
+        WindowStartupLocation="CenterOwner"
+        Background="#FFFFFF"
+        ResizeMode="CanResize">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#FFF1F2" Padding="14,8">
+            <TextBlock x:Name="HintText" Foreground="#9F1239" FontSize="13"
+                       Text="请在下方页面完成登录(扫码或手机号)。检测到登录成功后会自动关闭此窗口。"/>
+        </Border>
+        <wv2:WebView2 x:Name="AuthWebView" Grid.Row="1"/>
+    </Grid>
+</Window>

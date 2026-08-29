@@ -1,0 +1,25 @@
+<Window x:Class="DouyinShuffle.Win.DouyinPageWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="抖音原页"
+        Height="820" Width="1100"
+        WindowStartupLocation="CenterOwner"
+        Background="#FFFFFF"
+        ResizeMode="CanResize">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#F1F5F9" Padding="12,8">
+            <DockPanel>
+                <Button x:Name="BtnClose" DockPanel.Dock="Right" Content="关闭并返回播放"
+                        Padding="10,5" FontSize="12" Cursor="Hand"/>
+                <TextBlock VerticalAlignment="Center" Foreground="#475569" FontSize="12"
+                           Text="抖音原页(可看评论、点赞)。关闭窗口即可回到应用继续播放。"/>
+            </DockPanel>
+        </Border>
+        <wv2:WebView2 x:Name="PageWebView" Grid.Row="1"/>
+    </Grid>
+</Window>

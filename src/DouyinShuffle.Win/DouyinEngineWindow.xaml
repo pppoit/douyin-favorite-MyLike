@@ -1,0 +1,19 @@
+<Window x:Class="DouyinShuffle.Win.DouyinEngineWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="MyLike Engine"
+        Height="900" Width="1200"
+        WindowStartupLocation="Manual"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        WindowStyle="ToolWindow"
+        Background="#FFFFFF">
+    <!-- 抖音引擎页:登录态 + 签名 + 采集。常显保持渲染(SPA 懒加载/签名请求依赖渲染),
+         窗口定位在主屏幕左侧屏幕外(用户不可见;不能用右侧 —— 多显示器右副屏起点正是主屏右缘,
+         会完整暴露幽灵窗口,见 PositionOffscreen 注释)。WebView2 是 HwndHost,不受 WPF z-order 裁剪,
+         不能放在主窗口 Grid 里叠放(会盖住 UI)。 -->
+    <Grid>
+        <wv2:WebView2 x:Name="EngineWebView"/>
+    </Grid>
+</Window>
