@@ -285,7 +285,7 @@ on('btn-collect', 'click', async () => {
   if (Date.now() - stopAt < 3000) { toast('正在停止收尾,请等进度条消失后再点采集', true); return; }
   const r = await call('collect');
   if (r === 'busy') { toast('正在采集中,请耐心等待;频繁点击易触发限流', true); return; }
-  if (r === 'started') window.__dsh_collectStatus('正在检查接口状态…');
+  if (r === 'started') window.__dsh_collectStatus('正在检查接口状态…可能需要几十秒');
   else if (r && String(r).indexOf('err') === 0) toast(String(r), true);
 });
 let stopAt = 0;

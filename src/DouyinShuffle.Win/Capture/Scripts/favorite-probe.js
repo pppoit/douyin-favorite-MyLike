@@ -29,13 +29,12 @@
       .then(function (resp) { return resp.text(); }),
     timeout
   ]).then(function (text) {
-    var t = (text || '').trim();
-    if (t.charAt(0) === '<') { post({ type: 'fav_resp', id: ID, result: 'blocked' }); return; }
-    try {
-      var d = JSON.parse(t);
-      if (d && (d.aweme_list || d.status_code === 0)) { post({ type: 'fav_resp', id: ID, result: 'ok' }); return; }
-      if (d && d.status_code && d.status_code !== 0) { post({ type: 'fav_resp', id: ID, result: 'code:' + d.status_code }); return; }
-    } catch (e) {}
+    var c = window.__dsh_classify(text);
+    if (c.kind === 'verify') { post({ type: 'fav_resp', id: ID, result: 'blocked' }); return; }
+    if (c.kind === 'json') {
+      if (c.data && (c.data.aweme_list || c.data.status_code === 0)) { post({ type: 'fav_resp', id: ID, result: 'ok' }); return; }
+      if (c.data && c.data.status_code && c.data.status_code !== 0) { post({ type: 'fav_resp', id: ID, result: 'code:' + c.data.status_code }); return; }
+    }
     post({ type: 'fav_resp', id: ID, result: 'notready' });
   }).catch(function () {
     post({ type: 'fav_resp', id: ID, result: 'notready' });

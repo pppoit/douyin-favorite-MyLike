@@ -150,4 +150,43 @@ public static class DouyinProbe
         }
         catch { return false; }
     }
+
+    /// <summary>
+    /// detail 接口(播放取链)探测:裸 fetch 指定 aweme_id 的详情,三态判定。
+    /// 用途:播放取链连续失败时区分"引擎页状态过期(reload 重建 SDK 可修复)"与
+    /// "detail 接口真被限(探测同样失败,reload 无用)"——播放侧终于能直接感知 detail 接口状态,
+    /// 不必再盲 reload 或依赖验证窗信号(验证窗信号是 favorite/self,代表不了 detail,实测踩坑)。
+    /// </summary>
+    public static async Task<ApiHealth> CheckDetailApiAsync(CoreWebView2? core, string awemeId)
+    {
+        if (core == null || string.IsNullOrEmpty(awemeId)) return ApiHealth.NotReady;
+        var id = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Handler(object? s, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            try
+            {
+                var jo = JObject.Parse(e.WebMessageAsJson);
+                if (jo?["type"]?.Value<string>() == "detail_resp" && jo["id"]?.Value<string>() == id)
+                    tcs.TrySetResult(jo["body"]?.Value<string>() ?? jo["err"]?.Value<string>() ?? "");
+            }
+            catch { }
+        }
+        core.WebMessageReceived += Handler;
+        try
+        {
+            // 取数脚本见 Capture/Scripts/detail-fetch.js(6s 超时 + C# 6s TCS 兜底)
+            var js = ScriptLoader.Get("detail-fetch.js").Replace("{{AID}}", awemeId);
+            await core.ExecuteScriptAsync(js);
+            var v = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(6));
+            AppLog.Write("DETAIL-PROBE " + (v?.Length > 80 ? v[..80] : v));
+            if (string.IsNullOrEmpty(v) || v.StartsWith("err:", StringComparison.Ordinal)) return ApiHealth.NotReady;
+            var t = v.TrimStart();
+            if (t.StartsWith("<")) return ApiHealth.Blocked;   // HTML 验证页 = 真风控
+            try { _ = JObject.Parse(t); return ApiHealth.Ok; }  // 合法 JSON = detail 接口正常
+            catch { return ApiHealth.NotReady; }
+        }
+        catch { AppLog.Write("DETAIL-PROBE timeout/err"); return ApiHealth.NotReady; }
+        finally { core.WebMessageReceived -= Handler; }
+    }
 }

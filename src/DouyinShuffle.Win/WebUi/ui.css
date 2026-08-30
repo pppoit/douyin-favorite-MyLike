@@ -47,6 +47,9 @@ body { font-family:system-ui,"Microsoft YaHei",sans-serif; background:var(--bg);
 .side-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; color:var(--text); }
 .side-item:hover { background:var(--bg); }
 .side-item.active { background:rgba(225,29,72,.08); color:var(--accent); font-weight:600; }
+/* 手动刷新列表:红底强调,宽度为分类导航项一半,水平居中不贴边 */
+#btn-refresh-list { background:var(--accent); color:#fff; font-weight:600; margin:4px auto 0; padding:6px 10px; font-size:12px; width:50%; justify-content:center; }
+#btn-refresh-list:hover { background:var(--accent-dark); color:#fff; }
 .side-icon { width:18px; text-align:center; }
 .side-count { margin-left:auto; font-size:12px; color:var(--text-mute); }
 .side-foot { margin-top:auto; padding:10px 12px; font-size:12px; color:var(--text-dim); }

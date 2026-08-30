@@ -3,6 +3,7 @@
 // 不伪造指纹(webid/screen_*/browser_* 等硬编码值与真实环境不一致,反有被风控识别的隐患),
 // 其余参数交由页面 webmssdk 拦截器按真实环境现补。
 // 结果判定:ok:sec_uid(登录+签名就绪) / html(验证页=真风控) / 其余(NotReady)。
+// 响应形态统一由共享分类器 __dsh_classify 判定(见 classify.js)。
 (function () {
   var ID = '{{ID}}';
   function post(d) {
@@ -25,15 +26,11 @@
       .then(function (resp) { return resp.text(); }),
     timeout
   ]).then(function (text) {
-    if (!text) { post({ type: 'health_resp', id: ID, result: 'empty' }); return; }
-    var t = text.trim();
-    if (t.charAt(0) === '<') { post({ type: 'health_resp', id: ID, result: 'html' }); return; }
-    try {
-      var d = JSON.parse(t);
-      if (d && d.user && d.user.sec_uid && d.user.sec_uid.indexOf('MS4wLjAB') === 0) {
-        post({ type: 'health_resp', id: ID, result: 'ok:' + d.user.sec_uid }); return;
-      }
-    } catch (e) {}
+    var c = window.__dsh_classify(text);
+    if (c.kind === 'json' && c.data && c.data.user && c.data.user.sec_uid && c.data.user.sec_uid.indexOf('MS4wLjAB') === 0) {
+      post({ type: 'health_resp', id: ID, result: 'ok:' + c.data.user.sec_uid }); return;
+    }
+    if (c.kind === 'verify') { post({ type: 'health_resp', id: ID, result: 'html' }); return; }
     post({ type: 'health_resp', id: ID, result: 'no_uid' });
   }).catch(function () {
     post({ type: 'health_resp', id: ID, result: 'err' });

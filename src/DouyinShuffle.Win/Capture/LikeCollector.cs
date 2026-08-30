@@ -49,6 +49,9 @@ public sealed class LikeCollector
     /// <summary>直连采集中已入库条数(进度推送用;JS 只回传页级进度)。</summary>
     private int _directStoredAtStart;
 
+    /// <summary>接口失败退避重试中(direct_fail 置位,direct_progress 清除)→ 进度文案附带"接口受限正在重试"提示。</summary>
+    private bool _retrying;
+
     /// <summary>当前采集轮次(分轮续采时由宿主设置,进度文本展示用;默认 1)。</summary>
     public int Round { get; set; } = 1;
 
@@ -129,7 +132,7 @@ public sealed class LikeCollector
                 return;
             }
 
-            // 页级失败上报(诊断:状态码 + 响应体片段)
+            // 页级失败上报(诊断:状态码 + 响应体片段);退避重试中 → 进度文案附带提示
             if (type == "direct_fail")
             {
                 var status = jo["status"]?.Value<int>() ?? 0;
@@ -137,6 +140,7 @@ public sealed class LikeCollector
                 var head = (jo["body"]?.Value<string>() ?? "").Replace("\n", " ");
                 if (head.Length > 80) head = head[..80];
                 Diagnostic?.Invoke($"DIRECT-FAIL empty={empty} status={status} body={head}");
+                _retrying = true;   // 采不动:接口失败退避重试中
                 return;
             }
 
@@ -145,7 +149,9 @@ public sealed class LikeCollector
             {
                 var fetched = jo["fetched"]?.Value<int>() ?? 0;
                 var newCount = Count - _directStoredAtStart;
-                StatusChanged?.Invoke($"采集中(第 {Round} 轮):本轮新增 {newCount} 条 · 已采 {Count} 条(本轮第 {fetched} 页)…");
+                var retryTip = _retrying ? " · 接口受限正在重试,被动失败后请等一会儿再采集" : "";
+                StatusChanged?.Invoke($"采集中(第 {Round} 轮):本轮新增 {newCount} 条 · 已采 {Count} 条(本轮第 {fetched} 页)…{retryTip}");
+                _retrying = false;   // 有成功页返回 → 恢复为正常采集状态
                 CountChanged?.Invoke(Count);
                 return;
             }

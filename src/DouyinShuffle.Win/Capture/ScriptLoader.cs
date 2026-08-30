@@ -14,21 +14,29 @@ internal static class ScriptLoader
     private static readonly Dictionary<string, string> Cache = new();
     private static readonly object Sync = new();
 
-    /// <summary>读脚本(带缓存)。name 为文件名,如 "paged-loop.js"。</summary>
+    /// <summary>读脚本(带缓存)。name 为文件名,如 "paged-loop.js"。
+    /// 非共享脚本自动前置注入 classify.js(统一响应分类器),保证所有采集/探测脚本判定一致。</summary>
     public static string Get(string name)
     {
         lock (Sync)
         {
             if (Cache.TryGetValue(name, out var cached)) return cached;
         }
+        var content = ReadRaw(name);
+        if (name != "classify.js")
+            content = ReadRaw("classify.js") + "\n" + content;
+        lock (Sync) { Cache[name] = content; }
+        return content;
+    }
+
+    private static string ReadRaw(string name)
+    {
         var asm = Assembly.GetExecutingAssembly();
         // 资源名 = 命名空间.目录.文件名(默认 EmbeddedResource 命名规则)
         var resName = $"{typeof(ScriptLoader).Namespace}.Scripts.{name}";
         using var s = asm.GetManifestResourceStream(resName)
             ?? throw new FileNotFoundException($"embedded script not found: {resName}");
         using var r = new StreamReader(s);
-        var content = r.ReadToEnd();
-        lock (Sync) { Cache[name] = content; }
-        return content;
+        return r.ReadToEnd();
     }
 }

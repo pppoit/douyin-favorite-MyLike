@@ -64,11 +64,11 @@
     // 挂起保护:Promise.race 6 秒超时(黑洞时快速失败;正常接口响应 <2s,余量充足)
     var timeout = new Promise(function (res, rej) { setTimeout(function () { rej(new Error('timeout6s')); }, 6000); });
     Promise.race([send(url), timeout]).then(function (res) {
-      var body = res.b, status = res.s;
-      var isJson = body && body.trim().charAt(0) === '{';
-      if (!isJson) {
+      var c = window.__dsh_classify(res.b, res.s);
+      if (c.kind !== 'json') {
+        // 非合法 JSON(验证页 A / 黑洞超时 B / 解析失败)→ 空响应计数,统一分流
         empty++;
-        post({ type: 'direct_fail', fetched: fetched, empty: empty, status: status, body: (body || '').slice(0, 150) });
+        post({ type: 'direct_fail', fetched: fetched, empty: empty, status: res.s, body: (res.b || '').slice(0, 150) });
         // 首页即不可用 → notready,让宿主分流(网络抖动重试 / 限流弹验证)
         if (fetched === 0 && empty >= 2) { done('notready'); return; }
         if (empty >= 3) { done('blocked'); return; }   // 连续 3 次空响应即判定风控(缩短黑洞空转)
@@ -76,17 +76,17 @@
         emptyDelay = Math.min(8000, emptyDelay * 2);
         return;
       }
+      // 合法 JSON:直接复用分类器解析结果(data/list/hasMore),不再各自 try/parse
       empty = 0;
       emptyDelay = 1200;
-      post({ type: 'direct_resp', url: url, status: status, body: body });
+      var data = c.data;
+      post({ type: 'direct_resp', url: url, status: res.s, body: res.b });
       fetched++;
-      var data = null;
-      try { data = JSON.parse(body); } catch (e) {}
-      var pFirst = (data && data.aweme_list && data.aweme_list[0]) ? data.aweme_list[0].aweme_id : '';
-      var pCount = data && data.aweme_list ? data.aweme_list.length : 0;
+      var pFirst = c.list && c.list[0] ? c.list[0].aweme_id : '';
+      var pCount = c.list.length;
       totalItems += pCount;
       post({ type: 'direct_progress', fetched: fetched, cursor: CURSOR, first: pFirst, items: pCount, totalItems: totalItems });
-      var hasMore = data && data.has_more;
+      var hasMore = c.hasMore;
       var next = data && data.max_cursor ? data.max_cursor : 0;
       var curFirst = pFirst;
       // 增量模式:整页全为已知 ID = 已到断点(喜欢列表倒序,旧内容无需重翻)。
@@ -94,9 +94,8 @@
       if (KNOWN && pCount > 0) {
         var knownHits = 0;
         try {
-          var list = data.aweme_list;
-          for (var ki = 0; ki < list.length; ki++) {
-            if (KNOWN[list[ki].aweme_id]) knownHits++;
+          for (var ki = 0; ki < c.list.length; ki++) {
+            if (KNOWN[c.list[ki].aweme_id]) knownHits++;
           }
         } catch (e) {}
         if (knownHits === pCount) {

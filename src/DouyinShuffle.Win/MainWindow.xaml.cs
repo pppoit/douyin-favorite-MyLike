@@ -371,7 +371,10 @@ public partial class MainWindow : Window
         {
             _authWindow = null;
             if (mode == DouyinAuthWindow.AuthMode.Verify)
+            {
+                _orchestrator?.NotifyVerifyAbandoned();   // 状态机:Verifying → RiskHeld,等下次点采集再弹
                 DispatchUi("window.__dsh_verifyLock && window.__dsh_verifyLock(false)");
+            }
             DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText(mode == DouyinAuthWindow.AuthMode.Login ? "已取消登录" : "已取消验证,采集暂停")},true)");
         };
         win.Show();
@@ -397,14 +400,24 @@ public partial class MainWindow : Window
     private async void OnPlayerRisk(int index)
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(OnPlayerRisk, index); return; }
-        // 取链失败根因通常是引擎页 SDK 拦截器状态过期(风控后旧页面上下文失效,裸 fetch 持续黑洞),
-        // "重启应用才恢复"即此原因 → 这里把"重启"自动化:reload 引擎页重建 SDK 后自动重播。
-        // 验证窗信号(favorite/self)代表不了 detail 取链接口状态,弹窗只会秒过且无济于事,故不弹。
+        // 取链失败两种根因:① 引擎页 SDK 拦截器状态过期(裸 fetch 黑洞,reload 重建可修复);
+        // ② detail 接口真被限(验证窗信号 favorite/self 代表不了它,弹窗只会秒过,故不弹)。
+        // 用 detail 探测直接区分:接口正常 → 页面过期 → reload 后自动重播;接口受限 → 不白 reload,提示稍后。
         if (index < 0 || _playerRiskReloadCount >= 2)
         {
             DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("取链持续失败(页面状态异常),请稍后重试或重启应用")},true)");
             return;
         }
+        // 用失败条目的 aweme_id 探测 detail 接口真实状态
+        var probe = ApiHealth.NotReady;
+        if (_player != null && index < _player.Queue.Count)
+            probe = await DouyinProbe.CheckDetailApiAsync(DouyinCoreInternal, _player.Queue[index].AwemeId);
+        if (probe != ApiHealth.Ok)
+        {
+            DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("取链接口暂时受限,请稍后重试播放(或过一会儿再试)")},true)");
+            return;
+        }
+        // detail 接口正常 → 页面状态过期 → reload 重建 SDK 后自动重试
         _playerRiskReloadCount++;
         DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("取链异常,正在刷新页面状态…")},false)");
         await ReloadDouyinPageAsync();
