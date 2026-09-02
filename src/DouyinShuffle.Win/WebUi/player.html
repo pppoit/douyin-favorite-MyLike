@@ -22,8 +22,16 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
 #dsh-ctrl{position:absolute;bottom:0;left:0;right:0;display:flex;gap:22px;align-items:center;justify-content:center;padding-bottom:18px;z-index:3;background:linear-gradient(to top,rgba(0,0,0,.6),transparent)}
 #dsh-ctrl button{background:transparent;border:none;color:#fff;font-size:20px;width:46px;height:46px;cursor:pointer;border-radius:50%;display:flex;align-items:center;justify-content:center}
 #dsh-ctrl button:hover{background:rgba(255,255,255,.15)}
+#dsh-ctrl button.on{color:var(--accent)}
 #dsh-toggle{font-size:26px !important;width:54px !important;height:54px !important}
 #dsh-page,#dsh-fs,#dsh-mute{font-size:15px !important}
+#dsh-auto{width:auto !important;min-width:50px;padding:0 8px;font-size:13px !important;letter-spacing:.5px}
+/* 音量控件:点击图标=静音开关;悬停按钮上方弹出水平滑条调音量 */
+#dsh-vol-wrap{position:relative;display:flex;align-items:center}
+/* 音量控件:点击图标=静音开关;悬停按钮上方弹出垂直滑条调音量 */
+#dsh-vol-wrap{position:relative;display:flex;align-items:center}
+#dsh-vol{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);width:26px;height:110px;margin:0;display:none;cursor:pointer;writing-mode:vertical-lr;direction:rtl;accent-color:var(--accent);background:rgba(20,20,24,.85);border-radius:6px}
+#dsh-vol-wrap:hover #dsh-vol,#dsh-vol-wrap.ui-open #dsh-vol{display:block}
 #dsh-info{position:absolute;left:24px;right:24px;bottom:96px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);pointer-events:none;text-align:left;z-index:3}
 #dsh-title{font-size:15px;line-height:1.5;max-height:45px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all}
 #dsh-author{font-size:12px;opacity:.85;margin-top:8px}
@@ -63,7 +71,11 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
     <button id="dsh-prev" title="上一首(↑)">&#9198;</button>
     <button id="dsh-toggle" title="播放/暂停(空格)">&#9654;</button>
     <button id="dsh-next" title="下一首(↓)">&#9197;</button>
-    <button id="dsh-mute" title="静音(M)">&#128266;</button>
+    <span id="dsh-vol-wrap" title="">
+      <button id="dsh-mute" title="静音(M),悬停上方滑条调音量">&#128266;</button>
+      <input id="dsh-vol" type="range" min="0" max="100" value="100" title="音量" />
+    </span>
+    <button id="dsh-auto" title="自动连播:关(按 A 开启)">连播关</button>
     <button id="dsh-page" title="打开原页看评论">原页</button>
     <button id="dsh-fs" title="全屏(F / 双击画面)">全屏</button>
   </div>
@@ -78,10 +90,38 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
 
   // 模块级状态(跨 show 共享,防旧定时器串台)
   var slideTimer = null, slideIdx = 0, slideImages = [], slidePaused = false;
-  var stallTimer = null, showSeq = 0, muted = false;
+  var stallTimer = null, showSeq = 0, muted = false, volume = 100, lastVol = 100, autoNext = false;
 
   function updateToggleIcon(playing) { $('dsh-toggle').innerHTML = playing ? '&#9208;' : '&#9654;'; }
-  function updateMuteIcon() { $('dsh-mute').innerHTML = muted ? '&#128263;' : '&#128266;'; }
+  // 音量应用 + 图标/滑块同步:静音图标随"静音开关或音量=0"显示 🔇;静音时滑块仍保留原音量值
+  function updateMuteIcon() {
+    var silent = muted || volume <= 0;
+    $('dsh-mute').innerHTML = silent ? '&#128263;' : '&#128266;';
+    $('dsh-mute').title = silent ? '已静音,点击或拖滑条恢复声音(M)' : '静音(M),悬停上方滑条调音量';
+    var s = $('dsh-vol');
+    if (s && s.value != volume) s.value = volume;
+  }
+  function applyVol() {
+    try {
+      var m = muted || volume <= 0;
+      video.muted = m; audio.muted = m;
+      video.volume = volume / 100; audio.volume = volume / 100;
+    } catch (e) {}
+  }
+  // 自动连播:设置开关 + 刷新按钮态(title/高亮);C# 每次 Show 带 cfg.autoNext 作为初值,切歌后状态同步
+  function setAutoNext(on) {
+    autoNext = !!on;
+    var b = $('dsh-auto');
+    if (!b) return;
+    b.textContent = autoNext ? '连播开' : '连播关';   // 文字按钮:开/关即当前状态(高亮=已开启)
+    b.classList.toggle('on', autoNext);
+    b.title = autoNext ? '自动连播:开(按 A 关闭)' : '自动连播:关(按 A 开启)';
+  }
+  function toggleAutoNext() {
+    setAutoNext(!autoNext);
+    post({ player: 'autonext', on: autoNext });   // 上报宿主持久化(宿主回写幂等,保证单一最终态)
+  }
+  window.__dshSetAutoNext = setAutoNext;
   function hideHint() { hint.style.display = 'none'; }
   function showLoader(text) { if (text) $('dsh-load-text').textContent = text; $('dsh-load').style.display = 'flex'; }
   function hideLoader() { $('dsh-load').style.display = 'none'; }
@@ -96,7 +136,7 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
   function uiHold() { if (uiTimer) { clearTimeout(uiTimer); uiTimer = null; } root.classList.add('ui-hold'); root.classList.remove('ui-on'); }
   function uiResume() { root.classList.remove('ui-hold'); uiShow(); }
   root.addEventListener('mousemove', function () { if (root.classList.contains('ui-hold')) return; uiShow(); });
-  ['dsh-ctrl', 'dsh-pb', 'dsh-info'].forEach(function (id) {
+  ['dsh-ctrl', 'dsh-pb', 'dsh-info', 'dsh-vol-wrap'].forEach(function (id) {
     var el = $(id); if (!el) return;
     el.addEventListener('pointerenter', uiHold);
     el.addEventListener('pointerleave', uiResume);
@@ -172,7 +212,8 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
   }, { passive: false });
 
   root.addEventListener('click', function (e) {
-    if (e.target.closest && e.target.closest('button')) return;
+    // 按钮/进度条/音量控件的 click 不触发播放/暂停
+    if (e.target.closest && (e.target.closest('button') || e.target.closest('#dsh-pb') || e.target.closest('#dsh-vol-wrap'))) return;
     togglePlay();
   });
   video.addEventListener('dblclick', function (e) { e.preventDefault(); post({ player: 'fullscreen' }); });
@@ -180,7 +221,18 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
   // ---------- 按钮 ----------
   // 全屏走 C# 窗口级全屏(WebView2 内 requestFullscreen 不可靠):通知宿主切换
   function toggleFs() { post({ player: 'fullscreen' }); }
-  function toggleMute() { muted = !muted; video.muted = muted; audio.muted = muted; updateMuteIcon(); }
+  // 静音开关:无声(静音或音量 0)时点按 = 恢复 lastVol;有声时点按 = 静音
+  function toggleMute() {
+    if (muted || volume <= 0) {
+      muted = false;
+      if (volume <= 0) volume = lastVol > 0 ? lastVol : 100;
+    } else {
+      lastVol = volume;
+      muted = true;
+    }
+    applyVol();
+    updateMuteIcon();
+  }
 
   $('dsh-toggle').onclick = function (e) { e.stopPropagation(); togglePlay(); };
   $('dsh-prev').onclick = function (e) { e.stopPropagation(); post({ player: 'prev' }); };
@@ -189,6 +241,15 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
   $('dsh-close').onclick = function (e) { e.stopPropagation(); post({ player: 'close' }); };
   $('dsh-fs').onclick = function (e) { e.stopPropagation(); toggleFs(); };
   $('dsh-mute').onclick = function (e) { e.stopPropagation(); toggleMute(); };
+  $('dsh-auto').onclick = function (e) { e.stopPropagation(); toggleAutoNext(); };
+  // 音量滑条:拖动实时生效;调到 >0 自动解除静音;调到 0 视为静音(图标 🔇,点按钮恢复上次音量)
+  $('dsh-vol').addEventListener('input', function () {
+    volume = parseInt($('dsh-vol').value, 10) || 0;
+    if (volume > 0) { muted = false; lastVol = volume; }
+    else { muted = true; }
+    applyVol();
+    updateMuteIcon();
+  });
   $('dsh-fail-skip').onclick = function (e) { e.stopPropagation(); post({ player: 'next' }); };
   $('dsh-fail-page').onclick = function (e) { e.stopPropagation(); post({ player: 'openpage' }); };
   $('dsh-slide-prev').onclick = function (e) { e.stopPropagation(); slideStep(-1); };
@@ -210,6 +271,7 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
       case 'ArrowDown': case 'PageDown': e.preventDefault(); post({ player: 'next' }); break;
       case 'KeyF': toggleFs(); break;
       case 'KeyM': toggleMute(); break;
+      case 'KeyA': toggleAutoNext(); break;
       case 'Escape': post({ player: 'close' }); break;
     }
   });
@@ -290,8 +352,19 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
   pbEl.addEventListener('pointerenter', function (evt) { if (!pbDragging) pbShowTip(evt.clientX); });
 
   // ---------- 视频事件 ----------
-  video.addEventListener('ended', function () { try { video.currentTime = 0; video.play(); } catch (e) {} });   // 循环
-  audio.addEventListener('ended', function () { try { if (audio.src) { audio.currentTime = 0; audio.play(); } } catch (e) {} });
+  // 播放结束:自动连播开 → 通知宿主切下一条(宿主侧自动跳过失效/到队尾停止);
+  // 关 → 本地循环当前条(现状)。图文模式以 BGM 结束为界(同抖音)。
+  video.addEventListener('ended', function () {
+    if (autoNext) { post({ player: 'next' }); return; }
+    try { video.currentTime = 0; video.play(); } catch (e) {}
+  });
+  audio.addEventListener('ended', function () {
+    try {
+      if (!audio.src) return;
+      if (autoNext) { post({ player: 'next' }); return; }
+      audio.currentTime = 0; audio.play();
+    } catch (e) {}
+  });
   video.addEventListener('play', function () { hideHint(); updateToggleIcon(true); });
   video.addEventListener('pause', function () { updateToggleIcon(false); });
   var lastProgress = 0;
@@ -316,7 +389,8 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
     stopStallCheck();
     root.classList.add('ui-on');
     uiShow();
-    if (muted) { video.muted = true; audio.muted = true; }
+    applyVol();   // 恢复/保持用户音量设置(静音或自定义音量)
+    setAutoNext(!!cfg.autoNext);   // 同步宿主自动连播开关(初值/切歌后)
 
     var titleText = cfg.title || '';
     if (titleText.length > 60) titleText = titleText.slice(0, 60) + '…';

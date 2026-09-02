@@ -247,6 +247,14 @@ public partial class MainWindow : Window
             ShowPlayer();
             _player?.ResumeAfterNavigate();
         };
+
+        // 自动连播:开关变化 → 落盘 + 同步主界面勾选态(播放页 toggle / 主界面切换 / 启动恢复统一入口)
+        _player.AutoNextChanged += on =>
+        {
+            _store?.SaveAutoNext(on);
+            DispatchUi($"window.__dsh_autoNext && window.__dsh_autoNext({(on ? "true" : "false")})");
+        };
+        _player.SetAutoNext(_store?.LoadState().AutoNext ?? false);   // 恢复上次选择(默认关)
     }
 
     // ---------- 登录态 ----------
@@ -620,7 +628,8 @@ public partial class MainWindow : Window
                 case "state":
                     {
                         var loggedIn = await IsLoggedInAsync();
-                        return $"{{\"loggedIn\":{(loggedIn ? "true" : "false")},\"count\":{_collector?.Count ?? 0}}}";
+                        var autoNext = _player?.AutoNext ?? false;
+                        return $"{{\"loggedIn\":{(loggedIn ? "true" : "false")},\"count\":{_collector?.Count ?? 0},\"autoNext\":{(autoNext ? "true" : "false")}}}";
                     }
 
                 case "collect":
@@ -763,6 +772,23 @@ public partial class MainWindow : Window
                 case "stop":
                     if (_player != null) await _player.StopAsync();
                     return "ok";
+
+                case "autonext":
+                    {
+                        // 主界面工具栏开关:args=[true|false](播放页 toggle 走 postMessage 通道,见 PlaybackController)
+                        var on = false;
+                        try
+                        {
+                            var arr = Newtonsoft.Json.Linq.JArray.Parse(jsonArgs);
+                            if (arr.Count > 0)
+                                on = arr[0].Type == Newtonsoft.Json.Linq.JTokenType.Boolean
+                                    ? (bool)arr[0]!
+                                    : string.Equals(arr[0].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+                        }
+                        catch { }
+                        _player?.SetAutoNext(on);
+                        return "ok";
+                    }
 
                 // ---------- 自绘标题栏:窗口控制 ----------
                 case "winMin":

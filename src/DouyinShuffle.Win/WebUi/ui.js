@@ -74,6 +74,16 @@ window.__dsh_state = function (st) {
   loggedIn = !!st.loggedIn;
   applyLoginState();
   setText('stat-total', st.count || items.length);
+  if (typeof st.autoNext === 'boolean' && window.__dsh_autoNext) window.__dsh_autoNext(st.autoNext);
+};
+
+// 自动连播开关回显(宿主广播;元素惰性获取,任意时机可调)
+window.__dsh_autoNext = function (on) {
+  const cb = document.getElementById('auto-next');
+  const lb = document.getElementById('auto-next-label');
+  if (!cb || !lb) return;
+  cb.checked = !!on;
+  lb.classList.toggle('on', !!on);
 };
 
 // ---------- 采集进度 ----------
@@ -425,9 +435,10 @@ const HELP_TUTORIAL = `
   <li><kbd>空格</kbd> 播放 / 暂停</li>
   <li><kbd>↑</kbd> / <kbd>PageUp</kbd> 上一首;<kbd>↓</kbd> / <kbd>PageDown</kbd> 下一首</li>
   <li><kbd>←</kbd> / <kbd>→</kbd> 视频快退 / 快进 5 秒;图集中为上一张 / 下一张</li>
-  <li><kbd>F</kbd> 或双击画面 全屏开关;<kbd>M</kbd> 静音;<kbd>Esc</kbd> 停止并返回列表</li>
+  <li><kbd>F</kbd> 或双击画面 全屏开关;<kbd>M</kbd> 静音;<kbd>A</kbd> 自动连播;<kbd>Esc</kbd> 停止并返回列表</li>
 </ul>
 <ul>
+  <li><b>自动连播</b>:默认关(单条循环)。在列表工具栏勾选「自动连播」或播放页按 <kbd>A</kbd> / 点 <b>🔁</b> 开启后,一条播完自动播下一条,播到队尾自动停止返回列表;选择会记忆。</li>
   <li><b>播放范围跟筛选走</b>:在「图集」分类下点卡片,后续顺序播放的也都是图集;洗牌播放同样只播当前筛选结果。</li>
   <li><b>原页</b>:播放页点「原页」可打开该内容的抖音原页面查看评论。</li>
   <li><b>取链</b>:每次播放都实时向抖音获取最新播放地址(保证链接新鲜),打开前等待 1~2 秒属正常。</li>
@@ -528,6 +539,13 @@ document.addEventListener('keydown', e => {
 window.addEventListener('DOMContentLoaded', () => {
   bindGrid();
   updateSelectUi();
+  // 自动连播开关(与播放页 🔁 / 快捷键 A 同源;宿主广播 __dsh_autoNext 回显勾选态)
+  const autoNextEl = document.getElementById('auto-next');
+  const autoNextLabel = document.getElementById('auto-next-label');
+  autoNextEl.addEventListener('change', () => {
+    autoNextLabel.classList.toggle('on', autoNextEl.checked);
+    call('autonext', autoNextEl.checked);
+  });
   // 手动刷新列表按钮(采集/导入等操作后,由用户点击刷新)
   document.getElementById('btn-refresh-list').addEventListener('click', () => {
     refresh();

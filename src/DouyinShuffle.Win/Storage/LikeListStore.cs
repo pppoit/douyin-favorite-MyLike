@@ -15,12 +15,14 @@ public sealed class SyncState
     /// <summary>上次采集账号的 sec_uid(下次启动直接复用,不必重新探测)。</summary>
     public string SecUserId { get; set; } = "";
 
-    /// <summary>
-    /// 上次采集是否未跑完全量(失败/中断/手动停止)。
+    /// <summary>上次采集是否未跑完全量(失败/中断/手动停止)。
     /// true → 下次点「采集」从 MaxCursor 断点续采(旧内容未采完);
     /// false → 从头增量(只补新喜欢)。防"中途失败后旧内容永远采不到"。
     /// </summary>
     public bool CollectIncomplete { get; set; }
+
+    /// <summary>UI 偏好:自动连播开关(默认关)。与采集状态同文件存储,采集保存时保留不覆盖。</summary>
+    public bool AutoNext { get; set; }
 }
 
 /// <summary>
@@ -112,10 +114,20 @@ public sealed class LikeListStore
             CollectedCount = items.Count,
             LastSyncAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             SecUserId = secUserId?.Length > 0 ? secUserId : prev.SecUserId,
-            CollectIncomplete = collectIncomplete ?? prev.CollectIncomplete
+            CollectIncomplete = collectIncomplete ?? prev.CollectIncomplete,
+            AutoNext = prev.AutoNext   // UI 偏好:采集保存时保留用户上次选择
         };
         AtomicFile.WriteAllText(StatePath, JsonConvert.SerializeObject(state, Formatting.Indented));
         _stateCache = state;
+    }
+
+    /// <summary>单独持久化 UI 偏好(自动连播开关),不触碰列表文件。</summary>
+    public void SaveAutoNext(bool autoNext)
+    {
+        var state = _stateCache ?? LoadState();
+        if (state.AutoNext == autoNext) return;
+        state.AutoNext = autoNext;
+        AtomicFile.WriteAllText(StatePath, JsonConvert.SerializeObject(state, Formatting.Indented));
     }
 
     /// <summary>

@@ -21,6 +21,7 @@ public sealed class PlaybackController
     private int _index = -1;
     private bool _active;
     private bool _userInitiated;
+    private bool _autoNext;   // 自动连播:当前条目播放结束自动切下一条(默认关)
     private readonly HashSet<string> _refreshedIds = new();
     private int _skipped;
 
@@ -35,6 +36,9 @@ public sealed class PlaybackController
 
     /// <summary>当前播放项变化(item, 队列内索引)。</summary>
     public event Action<AwemeItem?, int>? CurrentChanged;
+
+    /// <summary>自动连播开关变化(宿主据此持久化 + 同步主界面勾选态)。</summary>
+    public event Action<bool>? AutoNextChanged;
 
     /// <summary>播放停止。</summary>
     public event Action? Closed;
@@ -67,8 +71,17 @@ public sealed class PlaybackController
     }
 
     public bool IsActive { get { lock (_sync) return _active; } }
+    public bool AutoNext { get { lock (_sync) return _autoNext; } }
     public IReadOnlyList<AwemeItem> Queue { get { lock (_sync) return _queue.ToList(); } }
     public int CurrentIndex { get { lock (_sync) return _index; } }
+
+    /// <summary>设置自动连播开关(播放页/主界面切换、启动恢复统一入口;单一真源)。</summary>
+    public void SetAutoNext(bool on)
+    {
+        lock (_sync) _autoNext = on;
+        AutoNextChanged?.Invoke(on);
+        _ = EvalAsync($"window.__dshSetAutoNext ? window.__dshSetAutoNext({(on ? "true" : "false")}) : 0");
+    }
 
     /// <summary>导航播放页到 player.html(本地文件)。</summary>
     public Task NavigateAsync(string playerHtmlPath)
@@ -278,7 +291,8 @@ public sealed class PlaybackController
             ",time:", Json(timeText),
             ",resume:", resume.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
             ",index:", _index,
-            ",total:", Queue.Count, "}");
+            ",total:", Queue.Count,
+            ",autoNext:", AutoNext ? "true" : "false", "}");
         await EvalAsync("window.__dshPlayerShow ? window.__dshPlayerShow(" + cfg + ") : 0");
         CurrentChanged?.Invoke(it, _index);
     }
@@ -343,6 +357,13 @@ public sealed class PlaybackController
                     break;
                 case "next":
                     _ = NextAsync();
+                    break;
+                case "autonext":
+                    // 播放页 toggle 上报目标值;C# 单一真源,持久化后回写幂等
+                    if (jo["on"]?.Type == Newtonsoft.Json.Linq.JTokenType.Boolean)
+                        SetAutoNext(jo["on"]!.Value<bool>());
+                    else
+                        SetAutoNext(!AutoNext);
                     break;
                 case "prev":
                     _ = PrevAsync();
