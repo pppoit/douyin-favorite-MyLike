@@ -81,7 +81,7 @@ html,body{height:100%;background:#000;overflow:hidden;font-family:system-ui,"Mic
   var stallTimer = null, showSeq = 0, muted = false;
 
   function updateToggleIcon(playing) { $('dsh-toggle').innerHTML = playing ? '&#9208;' : '&#9654;'; }
-  function updateMuteIcon() { $('dsh-mute').textContent = muted ? '&#128263;' : '&#128266;'; }
+  function updateMuteIcon() { $('dsh-mute').innerHTML = muted ? '&#128263;' : '&#128266;'; }
   function hideHint() { hint.style.display = 'none'; }
   function showLoader(text) { if (text) $('dsh-load-text').textContent = text; $('dsh-load').style.display = 'flex'; }
   function hideLoader() { $('dsh-load').style.display = 'none'; }
