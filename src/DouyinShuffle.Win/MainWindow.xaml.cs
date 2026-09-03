@@ -32,6 +32,8 @@ public partial class MainWindow : Window
     private LikeCollector? _collector;
     private LikeListStore? _store;
     private PlaybackController? _player;
+    // 新增：批量取消点赞服务；与原有采集/本地删除逻辑独立。
+    private UnlikeService? _unlikeService;
     private CollectOrchestrator? _orchestrator;
 
     /// <summary>抖音引擎页的 Core(屏幕外常显窗口里;登录态/签名/采集引擎)。</summary>
@@ -155,6 +157,9 @@ public partial class MainWindow : Window
             var state = _store.LoadState();
 
             _collector = new LikeCollector(DouyinCore!);
+            _unlikeService = new UnlikeService(DouyinCore!);
+            _unlikeService.ProgressChanged += (done, total, msg) =>
+                DispatchUi($"window.__dsh_unlikeProgress && window.__dsh_unlikeProgress({done},{total},{JsonText(msg)})");
             _collector.Seed(saved, state.MaxCursor);
             var collecting = false;
             _collector.StatusChanged += msg =>
@@ -709,6 +714,55 @@ public partial class MainWindow : Window
                         var idx = queue.FindIndex(i => i.AwemeId == item.AwemeId);
                         await _player.PlayAtAsync(idx, userInitiated: true);
                         return "ok";
+                    }
+
+                case "unlike":
+                    {
+                        var ids = Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(jsonArgs)
+                                  ?? Array.Empty<string>();
+                        if (_collector == null || _store == null || _unlikeService == null)
+                            return "err:not ready";
+                        if (ids.Length == 0)
+                            return "err:没有选择条目";
+                        if (_unlikeService.IsRunning)
+                            return "busy";
+                        if (!await IsLoggedInAsync())
+                            return "err:未登录,请先登录抖音";
+
+                        try
+                        {
+                            var result = await _unlikeService.UnlikeBatchAsync(ids);
+                            // 只把真正成功取消点赞的项目从本地列表移除。
+                            // 原“delete”命令完全不动。
+                            if (result.Success > 0)
+                            {
+                                // 根据成功/失败 ID 反推成功集合：
+                                // 失败列表的格式是 "id: reason"。
+                                var failedIds = new HashSet<string>(
+                                    result.Failures
+                                        .Select(x => x.Split(':', 2)[0]),
+                                    StringComparer.Ordinal);
+
+                                foreach (var id in ids)
+                                {
+                                    if (!failedIds.Contains(id))
+                                        _collector.Remove(id);
+                                }
+
+                                SaveNow();
+                                await PushStateAsync();
+                            }
+
+                            var detail = result.Failures.Count == 0
+                                ? ""
+                                : " 失败：" + string.Join("；", result.Failures.Take(5));
+
+                            return $"ok:{result.Success}:{result.Failed}{detail}";
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            return "err:已取消";
+                        }
                     }
 
                 case "delete":
