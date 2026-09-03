@@ -4,89 +4,34 @@ using Newtonsoft.Json.Linq;
 namespace DouyinShuffle.Win.Capture;
 
 /// <summary>
-/// 新增功能：批量取消抖音点赞。
-/// 独立于原 LikeCollector / 本地删除逻辑，不修改原采集与删除行为。
-/// 复用现有登录态的 WebView2，在页面上下文调用当前 Web 端的取消点赞接口。
+/// 批量取消抖音点赞 — 单条执行服务(源自 PR #1 pppoit 贡献,经重构)。
+/// 职责收敛为:在抖音引擎页上下文执行"单条取消点赞"并返回结构化结果;
+/// 批量编排(节流/风控自停/停止/进度/本地删除)由宿主 MainWindow 负责
+/// (那里才有 LikeCollector / LikeListStore / 验证窗口等依赖)。
+/// 复用现有登录态 WebView2,页面 securitySDK 自动补签名;不修改原采集与删除逻辑。
 /// </summary>
 public sealed class UnlikeService
 {
     private readonly CoreWebView2 _webView;
-    private volatile bool _running;
-
-    public bool IsRunning => _running;
-
-    public event Action<int, int, string>? ProgressChanged;
 
     public UnlikeService(CoreWebView2 webView)
     {
         _webView = webView;
     }
 
-    public async Task<UnlikeBatchResult> UnlikeBatchAsync(
-        IReadOnlyCollection<string> awemeIds,
-        CancellationToken cancellationToken = default)
-    {
-        if (_running)
-            return new UnlikeBatchResult(0, awemeIds.Count, new[] { "已有取消点赞任务正在执行" });
-
-        _running = true;
-        var success = 0;
-        var failures = new List<string>();
-
-        try
-        {
-            var ids = awemeIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-
-            for (var i = 0; i < ids.Count; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var id = ids[i];
-                try
-                {
-                    var result = await UnlikeOneAsync(id, cancellationToken);
-                    if (result.Success)
-                    {
-                        success++;
-                        ProgressChanged?.Invoke(i + 1, ids.Count, $"已取消 {i + 1}/{ids.Count}");
-                    }
-                    else
-                    {
-                        failures.Add($"{id}: {result.Message}");
-                        ProgressChanged?.Invoke(i + 1, ids.Count, $"失败 {i + 1}/{ids.Count}: {result.Message}");
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"{id}: {ex.Message}");
-                    ProgressChanged?.Invoke(i + 1, ids.Count, $"失败 {i + 1}/{ids.Count}");
-                }
-
-                // 保守节奏：避免连续点击过快。不是并发请求。
-                if (i + 1 < ids.Count)
-                    await Task.Delay(Random.Shared.Next(900, 1500), cancellationToken);
-            }
-        }
-        finally
-        {
-            _running = false;
-        }
-
-        return new UnlikeBatchResult(success, failures.Count, failures);
-    }
-
-    private async Task<UnlikeOneResult> UnlikeOneAsync(string awemeId, CancellationToken cancellationToken)
+    /// <summary>
+    /// 单条取消点赞:页面内裸 fetch POST digg 接口,结果结构化解码后返回。
+    /// 判定口径:HTTP 2xx 且 status_code==0 才算成功;
+    /// 解析不出业务状态码(空返回/非 JSON/HTML 验证页/浏览器异常/超时)归 NoResponse(疑似风控/黑洞);
+    /// 能读出状态码但非 0 归 ApiRejected(明确拒绝,如内容已下架或重复取消)。
+    /// </summary>
+    public async Task<UnlikeOneResult> UnlikeOneAsync(string awemeId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(awemeId))
-            return new UnlikeOneResult(false, "无效视频 ID");
+            return new UnlikeOneResult(false, UnlikeFailKind.ApiRejected, 0, null, "无效视频 ID");
 
-        // WebView2 的 ExecuteScriptAsync 不会等待 Promise。
-        // 因此不能直接 await 一个 async IIFE 的返回值；必须让页面通过
-        // WebMessageReceived 把 fetch 结果回传给 C#。
+        // WebView2 的 ExecuteScriptAsync 不会等待 Promise,
+        // 由页面通过 WebMessageReceived 把 fetch 结果回传(唯一 requestId 匹配,防串台)。
         var requestId = Guid.NewGuid().ToString("N");
         var tcs = new TaskCompletionSource<JObject>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -145,9 +90,10 @@ public sealed class UnlikeService
                   post({
                     ok: resp.ok,
                     http: resp.status,
+                    jsonOk: !!data,
                     status_code: data && data.status_code,
                     status_msg: data && (data.status_msg || data.msg),
-                    raw: text.slice(0, 800)
+                    raw: text.slice(0, 400)
                   });
                 } catch (e) {
                   post({ error: String(e) });
@@ -163,47 +109,56 @@ public sealed class UnlikeService
                 Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
 
             if (completed != tcs.Task)
-                return new UnlikeOneResult(false, "接口请求超时（10秒）");
+                return new UnlikeOneResult(false, UnlikeFailKind.NoResponse, 0, null, "接口请求超时(10 秒)");
 
             var result = await tcs.Task;
             var error = result.Value<string>("error");
             if (!string.IsNullOrWhiteSpace(error))
-                return new UnlikeOneResult(false, "浏览器请求失败: " + error);
+                return new UnlikeOneResult(false, UnlikeFailKind.NoResponse, 0, null, "浏览器请求失败: " + error);
 
             var http = result.Value<int?>("http") ?? 0;
             var statusCode = result.Value<int?>("status_code");
             var statusMsg = result.Value<string>("status_msg");
             var raw = result.Value<string>("raw") ?? "";
+            var jsonOk = result.Value<bool?>("jsonOk") == true;
 
             // 必须同时满足 HTTP 2xx + status_code=0 才算成功。
-            // 不再把“没有 status_code”误判成成功。
             if (http >= 200 && http < 300 && statusCode == 0)
-                return new UnlikeOneResult(true, "ok");
+                return new UnlikeOneResult(true, UnlikeFailKind.None, http, 0, "ok");
 
-            var detail = !string.IsNullOrWhiteSpace(statusMsg)
-                ? statusMsg
-                : (!string.IsNullOrWhiteSpace(raw) ? raw : "无返回内容");
+            // 读不出业务状态码(空/非 JSON/验证页/网络异常)→ 无响应类,批量层按"疑似风控/黑洞"处理
+            if (!jsonOk || !statusCode.HasValue)
+                return new UnlikeOneResult(false, UnlikeFailKind.NoResponse, http, statusCode, "无业务响应(疑似验证/黑洞)");
 
-            return new UnlikeOneResult(false,
-                $"接口失败: {detail} (HTTP {http}, code {statusCode?.ToString() ?? "?"})");
+            var detail = !string.IsNullOrWhiteSpace(statusMsg) ? statusMsg : raw;
+            if (detail.Length > 120) detail = detail[..120];
+            return new UnlikeOneResult(false, UnlikeFailKind.ApiRejected, http, statusCode,
+                string.IsNullOrWhiteSpace(detail) ? "接口拒绝" : $"接口拒绝: {detail}");
         }
         catch (OperationCanceledException)
         {
-            throw;
+            return new UnlikeOneResult(false, UnlikeFailKind.NoResponse, 0, null, "已中止");
         }
         catch (Exception ex)
         {
-            return new UnlikeOneResult(false, "请求异常: " + ex.Message);
+            return new UnlikeOneResult(false, UnlikeFailKind.NoResponse, 0, null, "请求异常: " + ex.Message);
         }
         finally
         {
             _webView.WebMessageReceived -= Handler;
         }
     }
+}
 
+/// <summary>单条失败分类:None=成功;ApiRejected=接口明确拒绝(可跳过继续);NoResponse=疑似风控/黑洞(需停)。</summary>
+public enum UnlikeFailKind
+{
+    None,
+    ApiRejected,
+    NoResponse
+}
 
-
-public sealed record UnlikeOneResult(bool Success, string Message);
+public sealed record UnlikeOneResult(bool Success, UnlikeFailKind FailKind, int Http, int? ApiCode, string Message);
 
 public sealed record UnlikeBatchResult(
     int Success,

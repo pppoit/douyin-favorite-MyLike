@@ -286,10 +286,45 @@ async function refresh() {
 }
 
 
-// ---------- 批量取消抖音点赞(新增功能) ----------
-window.__dsh_unlikeProgress = function(done, total, msg) {
-  toast(msg || `正在取消点赞 ${done}/${total}`);
+// ---------- 批量取消抖音点赞 ----------
+// 进度条:宿主 __dsh_unlikeStart/Progress/End 驱动底部 unlike-bar;结束自动恢复按钮并刷新列表
+function setUnlikeBar(text) {
+  const el = document.getElementById('unlike-text');
+  if (el) el.textContent = text;
+}
+function setUnlikeBtn(busy) {
+  const btn = document.getElementById('btn-unlike');
+  if (btn) { btn.disabled = busy; btn.textContent = busy ? '处理中…' : '取消点赞'; }
+}
+window.__dsh_unlikeStart = function (total) {
+  const bar = document.getElementById('unlike-bar');
+  if (bar) bar.classList.remove('hidden');
+  setUnlikeBtn(true);
+  // 互斥:运行中禁用采集/洗牌入口(与取消点赞共用抖音引擎页)
+  ['btn-collect', 'btn-shuffle'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) { if (!b.dataset.origTitle) b.dataset.origTitle = b.title || ''; b.disabled = true; b.title = '批量取消点赞运行中,结束后可用'; }
+  });
+  setUnlikeBar(`准备取消 0/${total}…`);
 };
+window.__dsh_unlikeProgress = function (done, total, msg) {
+  setUnlikeBar(msg || `正在取消 ${done}/${total}`);
+};
+window.__dsh_unlikeEnd = async function (text) {
+  setUnlikeBar(text);
+  toast(text);
+  setUnlikeBtn(false);
+  ['btn-collect', 'btn-shuffle'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) { b.disabled = false; if (b.dataset.origTitle) { b.title = b.dataset.origTitle; delete b.dataset.origTitle; } }
+  });
+  setTimeout(() => {
+    const bar = document.getElementById('unlike-bar');
+    if (bar) bar.classList.add('hidden');
+  }, 8000);
+  await refresh();   // 重拉列表并退出选择模式
+};
+on('btn-unlike-stop', 'click', () => { call('unlikeStop'); toast('正在停止…'); });
 
 // ---------- 事件 ----------
 function on(id, evt, fn) { const el = document.getElementById(id); if (el) el.addEventListener(evt, fn); }
@@ -353,44 +388,25 @@ on('btn-unlike', 'click', async () => {
   }
 
   const count = selected.size;
+  const warn = count > 50
+    ? `\n\n⚠ 已选 ${count} 条,数量较大:抖音对批量取消有限流/风控风险,触发后会暂停并弹验证。建议先小批量试或分批操作。`
+    : '';
   if (!confirm(
-    `确定在抖音中取消选中的 ${count} 个作品的点赞吗？\n\n` +
-    `程序会逐个处理，速度较慢是正常的。\n` +
-    `只有成功取消点赞的条目才会从本地列表移除。`
+    `确定在抖音中取消选中的 ${count} 个作品的点赞吗?\n` +
+    `程序会逐个处理,速度较慢属正常,可随时点进度条旁「停止」。\n` +
+    `只有成功取消点赞的条目才会从本地列表移除。${warn}`
   )) return;
 
   const ids = [...selected];
-  const btn = document.getElementById('btn-unlike');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '取消中…';
-  }
-
-  toast(`开始处理 ${ids.length} 个点赞…`);
-
+  setUnlikeBtn(true);
   try {
     const r = await call('unlike', ids);
-
-    if (r === 'busy') {
-      toast('已经有取消点赞任务正在执行', true);
-      return;
-    }
-    if (r && String(r).indexOf('err') === 0) {
-      toast(String(r), true);
-      return;
-    }
-
-    const parts = String(r || '').split(':');
-    const ok = Number(parts[1] || 0);
-    const failed = Number(parts[2] || 0);
-    toast(`完成：成功取消 ${ok} 个${failed ? `，失败 ${failed} 个` : ''}`);
-
-    await refresh();
+    if (r === 'started') { /* 进度条由宿主 __dsh_unlikeStart 接管 */ }
+    else if (r === 'busy') { toast('已有取消点赞任务正在执行', true); setUnlikeBtn(false); }
+    else if (r && String(r).indexOf('err') === 0) { toast(String(r), true); setUnlikeBtn(false); }
+    else { toast('启动失败:' + r, true); setUnlikeBtn(false); }
   } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '取消点赞';
-    }
+    // 成功启动时按钮由 __dsh_unlikeEnd 恢复;其余路径上面已恢复
   }
 });
 

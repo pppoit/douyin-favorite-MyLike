@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private PlaybackController? _player;
     // 新增：批量取消点赞服务；与原有采集/本地删除逻辑独立。
     private UnlikeService? _unlikeService;
+    private CancellationTokenSource? _unlikeCts;   // 批量取消点赞:运行中令牌(防重入 + 停止)
     private CollectOrchestrator? _orchestrator;
 
     /// <summary>抖音引擎页的 Core(屏幕外常显窗口里;登录态/签名/采集引擎)。</summary>
@@ -157,9 +158,7 @@ public partial class MainWindow : Window
             var state = _store.LoadState();
 
             _collector = new LikeCollector(DouyinCore!);
-            _unlikeService = new UnlikeService(DouyinCore!);
-            _unlikeService.ProgressChanged += (done, total, msg) =>
-                DispatchUi($"window.__dsh_unlikeProgress && window.__dsh_unlikeProgress({done},{total},{JsonText(msg)})");
+            _unlikeService = new UnlikeService(DouyinCore!);   // 进度/结果由 UnlikeRunAsync 统一转发
             _collector.Seed(saved, state.MaxCursor);
             var collecting = false;
             _collector.StatusChanged += msg =>
@@ -638,6 +637,8 @@ public partial class MainWindow : Window
                     }
 
                 case "collect":
+                    // 互斥:取消点赞运行中不接受新采集(共用引擎页)
+                    if (_unlikeCts != null) return "err:批量取消点赞运行中,请先完成或停止";
                     return _orchestrator?.Start() ?? "err:not ready";
 
                 case "stopCollect":
@@ -646,6 +647,8 @@ public partial class MainWindow : Window
 
                 case "shuffle":
                     {
+                        // 互斥:取消点赞运行中不接受新播放(共用引擎页)
+                        if (_unlikeCts != null) return "err:批量取消点赞运行中,请先完成或停止";
                         if (_collector == null) return "empty";
                         var source = _collector.Items;   // 单次快照(每次访问都全量复制,避免重复取)
                         if (source.Count == 0) return "empty";
@@ -671,6 +674,8 @@ public partial class MainWindow : Window
 
                 case "play":
                     {
+                        // 互斥:取消点赞运行中不接受新播放(共用引擎页)
+                        if (_unlikeCts != null) return "err:批量取消点赞运行中,请先完成或停止";
                         var args = Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(jsonArgs) ?? Array.Empty<string>();
                         var awemeId = args.Length > 0 ? args[0] : "";
                         if (awemeId.Length == 0 || _collector == null || _player == null) return "err";
@@ -718,52 +723,32 @@ public partial class MainWindow : Window
 
                 case "unlike":
                     {
+                        // 批量取消点赞(加固版):后台异步逐条处理,立即返回 started;
+                        // 停止/进度/结束经 __dsh_unlikeStart/Progress/End 推给 UI
+                        if (_unlikeCts != null) return "busy";
+                        // 互斥:与采集/播放共用引擎页,同时跑会互相干扰并叠加风控
+                        if (_orchestrator is { IsCollecting: true })
+                            return "err:正在采集中,请先停止采集再取消点赞";
+                        if (_player is { IsActive: true })
+                            return "err:正在播放中,请先停止播放再取消点赞";
                         var ids = Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(jsonArgs)
                                   ?? Array.Empty<string>();
                         if (_collector == null || _store == null || _unlikeService == null)
                             return "err:not ready";
                         if (ids.Length == 0)
                             return "err:没有选择条目";
-                        if (_unlikeService.IsRunning)
-                            return "busy";
                         if (!await IsLoggedInAsync())
                             return "err:未登录,请先登录抖音";
 
-                        try
-                        {
-                            var result = await _unlikeService.UnlikeBatchAsync(ids);
-                            // 只把真正成功取消点赞的项目从本地列表移除。
-                            // 原“delete”命令完全不动。
-                            if (result.Success > 0)
-                            {
-                                // 根据成功/失败 ID 反推成功集合：
-                                // 失败列表的格式是 "id: reason"。
-                                var failedIds = new HashSet<string>(
-                                    result.Failures
-                                        .Select(x => x.Split(':', 2)[0]),
-                                    StringComparer.Ordinal);
-
-                                foreach (var id in ids)
-                                {
-                                    if (!failedIds.Contains(id))
-                                        _collector.Remove(id);
-                                }
-
-                                SaveNow();
-                                await PushStateAsync();
-                            }
-
-                            var detail = result.Failures.Count == 0
-                                ? ""
-                                : " 失败：" + string.Join("；", result.Failures.Take(5));
-
-                            return $"ok:{result.Success}:{result.Failed}{detail}";
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            return "err:已取消";
-                        }
+                        _unlikeCts = new CancellationTokenSource();
+                        DispatchUi($"window.__dsh_unlikeStart && window.__dsh_unlikeStart({ids.Length})");
+                        _ = UnlikeRunAsync(ids);
+                        return "started";
                     }
+
+                case "unlikeStop":
+                    _unlikeCts?.Cancel();
+                    return "ok";
 
                 case "delete":
                     {
@@ -890,6 +875,95 @@ public partial class MainWindow : Window
             var js = $"window.__dsh_respond && window.__dsh_respond({JsonText(id)}, {JsonText(result?.ToString() ?? "null")})";
             UiEval(js);
         });
+    }
+
+    // ---------- 批量取消点赞(加固编排:自适应节奏 + 风控探测分流) ----------
+    // 节奏自适应:无迹象 1.5~2.5s/条,每 20 条长休 5s;出现 NoResponse 立即退避到 4~6s。
+    // 连续 3 条 NoResponse → 现场分流(对齐采集/取链的"先探测再动作"哲学):
+    //   favorite 探测仍通(或无法探测)→ 更像页面 SDK 状态问题 → reload 引擎页重建后慢速自愈(限 1 次);
+    //   favorite 也不通 → 账号级验证 → 停止并弹验证窗(用户过滑块,引擎页自动 reload,重勾剩余即可续跑)。
+    // 业务明确拒绝(有状态码:下架/重复取消等)跳过继续;连续同因拒绝≥3 视为疑似限流,退避但不中断。
+    private async Task UnlikeRunAsync(string[] ids)
+    {
+        var ct = _unlikeCts?.Token ?? CancellationToken.None;
+        var rnd = Random.Shared;
+        var ok = 0;
+        var skip = 0;
+        var risk = 0;                 // 连续 NoResponse
+        var sameReject = 0;           // 连续同文案业务拒绝
+        string? lastReject = null;
+        var selfHealLeft = 1;         // 风控现场 reload 自愈次数上限(防 reload 循环)
+        var stopReason = "";
+        try
+        {
+            for (var i = 0; i < ids.Length; i++)
+            {
+                if (ct.IsCancellationRequested) { stopReason = "已手动停止"; break; }
+                DispatchUi($"window.__dsh_unlikeProgress && window.__dsh_unlikeProgress({i + 1},{ids.Length},{JsonText($"正在取消 {i + 1}/{ids.Length}…已成功 {ok} 条")})");
+                var r = await _unlikeService!.UnlikeOneAsync(ids[i], ct);
+                if (r.Success)
+                {
+                    ok++;
+                    risk = 0;
+                    sameReject = 0;
+                    lastReject = null;
+                    _collector!.Remove(ids[i]);
+                    SaveNow();   // 逐条落盘:中途退出/崩溃也只丢失"未处理"部分
+                }
+                else if (r.FailKind == UnlikeFailKind.NoResponse)
+                {
+                    risk++;
+                    if (risk >= 3)
+                    {
+                        // 现场分流:探测 favorite 只读接口,区分"页面问题(reload 可愈)"与"账号级验证(弹窗)"
+                        var favOk = false;
+                        var uid = _orchestratorSecUid();
+                        try { if (uid.Length > 0) favOk = await DouyinProbe.CheckFavoriteApiAsync(DouyinCoreInternal, uid); } catch { }
+                        if (selfHealLeft > 0 && (favOk || uid.Length == 0))
+                        {
+                            selfHealLeft--;
+                            risk = 0;
+                            DispatchUi($"window.__dsh_toast && window.__dsh_toast({JsonText("连续取消失败,正在刷新页面状态后慢速重试…")},false)");
+                            await ReloadDouyinPageAsync();
+                            try { await Task.Delay(4000, ct); } catch (OperationCanceledException) { stopReason = "已手动停止"; break; }
+                            continue;
+                        }
+                        stopReason = $"连续 {risk} 条无响应且接口探测失败(疑似触发验证),已自动停止";
+                        break;
+                    }
+                }
+                else   // 业务明确拒绝(下架/重复取消等)→ 跳过继续;连续同因≥3 视为疑似限流退避
+                {
+                    skip++;
+                    var same = lastReject != null && r.Message == lastReject;
+                    lastReject = r.Message;
+                    sameReject = same ? sameReject + 1 : 1;
+                }
+
+                // 自适应节奏:无迹象快,有迹象立即收敛
+                var d = risk > 0
+                    ? 4000 + rnd.Next(0, 2000)
+                    : sameReject >= 3 ? 3000 + rnd.Next(0, 1000)
+                    : 1500 + rnd.Next(0, 1000);
+                if ((i + 1) % 20 == 0) d += 5000;   // 每 20 条长休散热
+                try { await Task.Delay(d, ct); }
+                catch (OperationCanceledException) { stopReason = "已手动停止"; break; }
+            }
+        }
+        catch (Exception ex) { AppLog.Write("UNLIKE BATCH ERR " + ex); stopReason = "执行出错"; }
+        finally
+        {
+            _unlikeCts = null;
+            if (stopReason.Contains("验证") && !IsVerifyWindowOpen)
+            {
+                // 引导用户过滑块:验证通过后引擎页自动 reload;剩余条目本地未删,重新勾选即可续跑
+                OpenAuthWindow(DouyinAuthWindow.AuthMode.Verify);
+            }
+            var summary = stopReason.Length > 0
+                ? $"{stopReason}。已取消 {ok} 条,失败 {skip} 条。"
+                : $"已全部处理:取消 {ok} 条,失败 {skip} 条。";
+            DispatchUi($"window.__dsh_unlikeEnd && window.__dsh_unlikeEnd({JsonText(summary)})");
+        }
     }
 
     // ---------- 工具 ----------
