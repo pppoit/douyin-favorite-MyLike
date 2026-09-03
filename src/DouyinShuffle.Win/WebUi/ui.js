@@ -285,6 +285,12 @@ async function refresh() {
   } catch (e) { console.log('[ui] refresh err', e); }
 }
 
+
+// ---------- 批量取消抖音点赞(新增功能) ----------
+window.__dsh_unlikeProgress = function(done, total, msg) {
+  toast(msg || `正在取消点赞 ${done}/${total}`);
+};
+
 // ---------- 事件 ----------
 function on(id, evt, fn) { const el = document.getElementById(id); if (el) el.addEventListener(evt, fn); }
 
@@ -328,13 +334,66 @@ on('btn-logout', 'click', async () => {
 });
 on('btn-select', 'click', () => {
   selectMode = !selectMode;
-  if (selectMode) toast('点击卡片勾选要删除的内容,再点「删除」');
+  if (selectMode) toast('点击卡片勾选内容,再点「删除」或「取消点赞」');
   else selected.clear();
   updateSelectUi();
   renderGrid();
 });
 on('btn-select-all', 'click', () => { filtered.forEach(i => selected.add(i.awemeId)); updateSelectUi(); renderGrid(); });
 on('btn-unselect', 'click', () => { selected.clear(); updateSelectUi(); renderGrid(); });
+
+on('btn-unlike', 'click', async () => {
+  if (!selectMode) {
+    toast('请先点「选择」再勾选要取消点赞的内容', true);
+    return;
+  }
+  if (selected.size === 0) {
+    toast('请先勾选要取消点赞的条目', true);
+    return;
+  }
+
+  const count = selected.size;
+  if (!confirm(
+    `确定在抖音中取消选中的 ${count} 个作品的点赞吗？\n\n` +
+    `程序会逐个处理，速度较慢是正常的。\n` +
+    `只有成功取消点赞的条目才会从本地列表移除。`
+  )) return;
+
+  const ids = [...selected];
+  const btn = document.getElementById('btn-unlike');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '取消中…';
+  }
+
+  toast(`开始处理 ${ids.length} 个点赞…`);
+
+  try {
+    const r = await call('unlike', ids);
+
+    if (r === 'busy') {
+      toast('已经有取消点赞任务正在执行', true);
+      return;
+    }
+    if (r && String(r).indexOf('err') === 0) {
+      toast(String(r), true);
+      return;
+    }
+
+    const parts = String(r || '').split(':');
+    const ok = Number(parts[1] || 0);
+    const failed = Number(parts[2] || 0);
+    toast(`完成：成功取消 ${ok} 个${failed ? `，失败 ${failed} 个` : ''}`);
+
+    await refresh();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '取消点赞';
+    }
+  }
+});
+
 on('btn-delete', 'click', async () => {
   if (!selectMode) { toast('请先点「选择」再勾选要删除的内容', true); return; }
   if (selected.size === 0) { toast('请先勾选要删除的条目', true); return; }
